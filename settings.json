@@ -1,0 +1,21 @@
+{
+  "public": {
+    "appName": "Ozwell MCP Chat"
+  },
+  "private": {
+    "OZWELL_API_KEY": "BHSK-sandbox-FC5AWzqhZWwJvJqznpYYHVazREF0wKDL_BQL1vk_",
+    "OZWELL_API_URL": "https://ai.bluehive.com/api",
+    
+    "ELASTICSEARCH_NODE": "https://localhost:9200", 
+    "ELASTICSEARCH_USERNAME": "elastic", 
+    "ELASTICSEARCH_PASSWORD": "hZwv7oRcWlde6R2OW+Co", 
+    "ELASTICSEARCH_INSECURE_SSL": true, 
+
+    "RAG_ELASTICSEARCH_INDEX": "ozwell_documents",
+    "RAG_ELASTICSEARCH_SEARCH_FIELDS": ["title", "text_content", "summary"],
+    "RAG_ELASTICSEARCH_SOURCE_FIELDS": ["title", "text_content"],
+    "RAG_MAX_SNIPPETS": 3,
+    "RAG_VECTOR_FIELD": "embedding_vector",
+    "RAG_USE_VECTOR_SEARCH": false 
+  }
+}

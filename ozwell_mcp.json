@@ -1,0 +1,9 @@
+{
+    "mcpTools": {
+      "mongodb": {
+        "enabled": true,
+        "endpoint": "mongodb://localhost:27017/ozwell_mcp",
+        "collection": "mcp_documents"
+      }
+    }
+  }
