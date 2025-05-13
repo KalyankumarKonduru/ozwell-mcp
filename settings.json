@@ -12,10 +12,18 @@
     "ELASTICSEARCH_INSECURE_SSL": true, 
 
     "RAG_ELASTICSEARCH_INDEX": "ozwell_documents",
+    "RAG_ELASTICSEARCH_INDEX_CHUNKS": "ozwell_document_chunks",
     "RAG_ELASTICSEARCH_SEARCH_FIELDS": ["title", "text_content", "summary"],
     "RAG_ELASTICSEARCH_SOURCE_FIELDS": ["title", "text_content"],
     "RAG_MAX_SNIPPETS": 3,
     "RAG_VECTOR_FIELD": "embedding_vector",
-    "RAG_USE_VECTOR_SEARCH": false 
+    "RAG_USE_VECTOR_SEARCH": true,
+    "RAG_CHUNK_SIZE": 1000,
+    "RAG_CHUNK_OVERLAP": 200,
+    "RAG_MAX_CHUNKS": 50,
+    
+    "EMBEDDINGS_API_URL": "https://api.bluehive.com/embeddings",
+    "EMBEDDINGS_API_KEY": "BHSK-sandbox-FC5AWzqhZWwJvJqznpYYHVazREF0wKDL_BQL1vk_",
+    "EMBEDDINGS_MODEL": "text-embedding-3-small"
   }
 }

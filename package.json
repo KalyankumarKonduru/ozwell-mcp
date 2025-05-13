@@ -9,14 +9,21 @@
     "visualize": "meteor --production --extra-packages bundle-visualizer"
   },
   "dependencies": {
-    "@babel/runtime": "^7.20.7",
+    "@babel/runtime": "^7.22.15",
     "@elastic/elasticsearch": "^9.0.1",
     "axios": "^1.9.0",
+    "buffer": "^6.0.3",
     "form-data": "^4.0.2",
-    "meteor-node-stubs": "^1.2.1",
+    "meteor-node-stubs": "^1.2.5",
     "mongodb": "^6.16.0",
+    "pdf-lib": "^1.17.1",
+    "pdf-parse": "^1.1.1",
+    "mammoth": "^1.6.0",
+    "docx": "^8.5.0",
+    "xlsx": "^0.18.5",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "pdf-text-extract": "^1.5.0"
   },
   "meteor": {
     "mainModule": {
