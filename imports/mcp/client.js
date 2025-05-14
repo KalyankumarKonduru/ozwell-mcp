@@ -1,13 +1,13 @@
 import { Meteor } from "meteor/meteor";
-import { HTTP } from "meteor/http"; // Meteor's HTTP package
+import { HTTP } from "meteor/http";
 
-// Fetch configuration from settings.json
+
 const OZWELL_API_URL = Meteor.settings.private?.OZWELL_API_URL;
 const OZWELL_API_KEY = Meteor.settings.private?.OZWELL_API_KEY;
 const MONGODB_MCP_URL = Meteor.settings.private?.MONGODB_MCP_SERVER_URL;
 const ELASTICSEARCH_MCP_URL = Meteor.settings.private?.ELASTICSEARCH_MCP_SERVER_URL;
 
-// --- Ozwell LLM Client --- //
+
 export const mcpOzwellClient = {
   async sendMessageToOzwell(userQuery) {
     if (!OZWELL_API_URL || !OZWELL_API_KEY) {
@@ -39,7 +39,7 @@ export const mcpOzwellClient = {
         console.log(`API response status: ${response.statusCode}`);
         if (response.data) {
           console.log(`Response data structure: ${Object.keys(response.data).join(', ')}`);
-          // Log a snippet of the response text for debugging
+
           const textSample = response.data.choices?.[0]?.text || response.data.text || JSON.stringify(response.data).substring(0, 100);
           console.log(`Response text extract: ${textSample.substring(0, 100)}...`);
         }
@@ -50,11 +50,11 @@ export const mcpOzwellClient = {
         throw new Meteor.Error("ozwell-api-error", `Failed to get response from Ozwell LLM: ${error.message}`);
       }
     }
-    return null; // Should only be called from server
+    return null; 
   },
 };
 
-// --- Generic MCP Server Client --- //
+
 
 async function callMcpServer(serverUrl, serverName, toolName, params) {
   if (!serverUrl) {
@@ -65,12 +65,12 @@ async function callMcpServer(serverUrl, serverName, toolName, params) {
     try {
       console.log(`Calling ${serverName} MCP Server: ${serverUrl}, Tool: ${toolName}, Params:`, params);
       const response = await HTTP.call("POST", serverUrl, {
-        headers: { "Content-Type": "application/json" }, // Add auth headers if MCP servers require
+        headers: { "Content-Type": "application/json" }, 
         data: {
           jsonrpc: "2.0",
           method: toolName,
           params: params,
-          id: `mcp-${new Date().getTime()}` // Unique ID for JSON-RPC
+          id: `mcp-${new Date().getTime()}` 
         },
         timeout: 20000, // 20 seconds timeout
       });
@@ -170,7 +170,7 @@ function extractMcpInstructions(apiResponse) {
       };
     }
     
-    // Check for OpenAI-like format
+
     if (apiResponse.choices && 
         apiResponse.choices[0]?.message?.tool_calls && 
         apiResponse.choices[0].message.tool_calls.length > 0) {

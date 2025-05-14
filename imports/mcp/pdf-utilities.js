@@ -94,18 +94,13 @@ function detectXRefIssue(pdfBuffer) {
  */
 function fixXRefIssues(pdfBuffer) {
   try {
-    // This is a very simplified approach - in a production environment,
-    // you'd use a more sophisticated PDF library to rebuild the XRef table
-    // For now, we'll just add a basic XRef structure at the end
-    
+
     const pdfString = pdfBuffer.toString('ascii');
     
-    // If the PDF already has startxref, we'll leave it alone
     if (pdfString.includes('startxref')) {
       return pdfBuffer;
     }
     
-    // Otherwise, add a minimal xref table
     const xrefAddition = `
 xref
 0 1
@@ -149,8 +144,6 @@ export async function extractTextFromBrokenPDF(pdfBuffer) {
     const pdfString = repairedBuffer.toString('utf8', 0, Math.min(repairedBuffer.length, 2000000));
     
     let extractedText = '';
-    
-    // Extract text using various patterns common in PDFs
     
     // 1. Look for content between BT (Begin Text) and ET (End Text) markers
     const btEtRegex = /BT\s*(.*?)\s*ET/gs;

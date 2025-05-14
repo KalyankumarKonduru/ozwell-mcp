@@ -31,7 +31,7 @@ export default function App() {
     scrollToBottom();
   }, [messages]);
 
-  // Close tools menu when clicking outside
+
   useEffect(() => {
     function handleClickOutside(event) {
       if (toolsMenuRef.current && !toolsMenuRef.current.contains(event.target) && 
@@ -50,7 +50,7 @@ export default function App() {
     e.preventDefault();
     if (!inputText.trim() && !pendingUpload) return;
     
-    // Prepare message context if we have a pending upload
+
     let messageText = inputText.trim();
     let fileUploadInfo = null;
     
@@ -62,7 +62,7 @@ export default function App() {
         data: pendingUpload.data
       };
       
-      // If user didn't provide any context, add a default message
+
       if (!messageText) {
         messageText = `I'm uploading a document named "${pendingUpload.name}" for processing.`;
       }
@@ -70,13 +70,13 @@ export default function App() {
     
     setInputText('');
     
-    // First send the user message
+
     Meteor.call('messages.send', messageText, fileUploadInfo, (error) => {
       if (error) {
         console.error('Error sending message:', error);
         alert('Error sending message: ' + (error.reason || error.message));
       } else {
-        // Once the message is sent, clear the pending upload
+
         if (pendingUpload) {
           setPendingUpload(null);
           setSelectedFile(null);
@@ -96,9 +96,9 @@ export default function App() {
       setSelectedFile(file);
       const reader = new FileReader();
       reader.onload = (e) => {
-        const fileData = e.target.result.split(',')[1]; // Get the base64 part of the data URL
+        const fileData = e.target.result.split(',')[1];
         
-        // Set both file content and pending upload state
+
         setFileContent(e.target.result);
         setPendingUpload({
           name: file.name,
@@ -107,13 +107,12 @@ export default function App() {
           data: fileData
         });
         
-        // Focus the input field to encourage user to provide context
-        // and explain what the document is
+
         setTimeout(() => {
           const inputField = document.getElementById('messageInput');
           if (inputField) {
             inputField.focus();
-            // Set a hint placeholder
+
             inputField.placeholder = `Add context about ${file.name}...`;
           }
         }, 300);
@@ -125,7 +124,7 @@ export default function App() {
         setFileContent(null);
         setPendingUpload(null);
       };
-      reader.readAsDataURL(file); // Read as base64 data URL
+      reader.readAsDataURL(file); 
     }
   };
 
@@ -137,7 +136,6 @@ export default function App() {
       fileInputRef.current.value = null;
     }
     
-    // Reset input field placeholder
     const inputField = document.getElementById('messageInput');
     if (inputField) {
       inputField.placeholder = "Type your message...";
@@ -147,12 +145,11 @@ export default function App() {
   const handleMongoDbQuery = () => {
     setIsToolsMenuOpen(false);
     
-    // Ask for confirmation via chat
     Meteor.call('messages.send', "I would like to query the MongoDB database. Can you assist me with that?", null, (error) => {
       if (error) {
         alert('Error sending message: ' + (error.reason || error.message));
       } else {
-        // After confirmation dialog appears, show the actual query dialog
+
         const toolName = prompt("Enter MongoDB Tool Name (e.g., find_documents):", "find_documents");
         if (!toolName) return;
         
@@ -178,12 +175,12 @@ export default function App() {
   const handleElasticsearchQuery = () => {
     setIsToolsMenuOpen(false);
     
-    // Ask for confirmation via chat
+
     Meteor.call('messages.send', "I would like to search the Elasticsearch database. Can you help me with that?", null, (error) => {
       if (error) {
         alert('Error sending message: ' + (error.reason || error.message));
       } else {
-        // After confirmation dialog appears, show the actual query dialog
+
         const toolName = prompt("Enter Elasticsearch Tool Name (e.g., search_documents):", "search_documents");
         if (!toolName) return;
         

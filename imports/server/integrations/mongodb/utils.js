@@ -16,11 +16,10 @@ export const MCP_ERROR_CODES = {
 // Custom Error class for MongoDB tools within Meteor
 export class MongoIntegrationError extends Meteor.Error {
   constructor(errorCode, reason, details) {
-    // Meteor.Error constructor is (error, reason, details)
-    // We map MCP_ERROR_CODES to the 'error' string for Meteor
+
     let meteorErrorType = `mongodb-integration-error-${errorCode}`;
     super(meteorErrorType, reason, details);
-    this.mcpErrorCode = errorCode; // Store original MCP-style error code if needed
+    this.mcpErrorCode = errorCode; 
   }
 }
 

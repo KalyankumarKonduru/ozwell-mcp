@@ -14,7 +14,7 @@ const RAG_CONFIG = {
   KEYWORDS: [
     // More flexible keywords
     "search documents for",
-    "what does document x say about", // X will be part of the query
+    "what does document x say about",
     "find info on",
     "according to my files",
     "in my records",
@@ -23,13 +23,12 @@ const RAG_CONFIG = {
     "look in my files",
     "based on my documents",
     "show me documents related to",
-    "tell me about (.+?) from my documents", // Regex-like, but we'll use simple includes
+    "tell me about (.+?) from my documents",
     "what do my files say about",
-    "search for", // General search trigger
+    "search for",
     "find documents about"
   ],
-  // More specific patterns for extraction might be needed if simple keyword removal isn't enough
-  // For now, extractSearchQuery will try to strip these known prefixes.
+
   ELASTICSEARCH_INDEX: Meteor.settings.private?.RAG_ELASTICSEARCH_INDEX || "ozwell_documents",
   ELASTICSEARCH_INDEX_CHUNKS: Meteor.settings.private?.RAG_ELASTICSEARCH_INDEX_CHUNKS || "ozwell_document_chunks",
   ELASTICSEARCH_SEARCH_FIELDS: Meteor.settings.private?.RAG_ELASTICSEARCH_SEARCH_FIELDS || ["title", "text_content", "summary"],
@@ -45,9 +44,7 @@ const RAG_CONFIG = {
 function detectRagKeywords(text) {
   const lowerText = text.toLowerCase();
   return RAG_CONFIG.KEYWORDS.some(keyword => {
-    // For keywords that might be part of a phrase, simple includes is fine
-    // For keywords like "what does document x say about", we need to ensure it's a trigger
-    // This simple check might need refinement for more complex keyword patterns
+
     return lowerText.includes(keyword.replace(" (.+?) ", " ").replace(" x ", " ")); // Basic normalization for matching
   });
 }
@@ -70,23 +67,20 @@ function extractSearchQuery(text) {
     // Find the original keyword casing/structure for accurate length stripping
     const originalKeyword = RAG_CONFIG.KEYWORDS.find(k => k.toLowerCase().replace(" (.+?) ", " ").replace(" x ", " ") === bestMatchKeyword);
     if (originalKeyword) {
-        // A more careful stripping, assuming keyword is at the start
-        // This might need to be smarter if keywords can be mid-sentence for query extraction
+
         let query = text.substring(originalKeyword.length).trim();
-        // Remove common trailing phrases if keyword was like "tell me about X from my documents"
+
         if (originalKeyword.includes("from my documents")) {
             query = query.replace(/from my documents$/i, "").trim();
         }
          if (originalKeyword.includes("say about")) {
-            // e.g. "what do my files say about X" -> X
-            // This is tricky, for now, we assume the keyword was a prefix.
+
         }
         return query || text; // return original text if query becomes empty
     }
   }
   
-  // Fallback if no prefix keyword matched, or for more general search terms
-  // This part might need more sophisticated NLP if the query isn't just after a keyword
+
   if (lowerText.includes("search for")) {
     return text.substring(lowerText.indexOf("search for") + "search for".length).trim();
   }
@@ -94,7 +88,7 @@ function extractSearchQuery(text) {
     return text.substring(lowerText.indexOf("find documents about") + "find documents about".length).trim();
   }
 
-  return text; // Default to full text if no specific extraction rule applies
+  return text; 
 }
 
 // MongoDB Collections for storing documents and chunks
@@ -135,10 +129,10 @@ Meteor.methods({
 
     // If a file was uploaded, process it
     if (fileUploadInfo) {
-      // Create a unique document ID
+
       const documentId = new Mongo.ObjectID()._str;
       
-      // Insert a processing message
+
       await Messages.insertAsync({
         text: `Processing document "${fileUploadInfo.name}"...`,
         createdAt: new Date(),
@@ -147,10 +141,10 @@ Meteor.methods({
         type: "processing",
       });
 
-      // Start document processing asynchronously
-      this.unblock(); // Allow other methods to run
+
+      this.unblock(); 
       
-      // Process the document
+
       try {
         // Step 1: Convert base64 to buffer
         const fileBuffer = Buffer.from(fileUploadInfo.data, 'base64');

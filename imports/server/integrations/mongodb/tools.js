@@ -1,18 +1,16 @@
 import { Meteor } from "meteor/meteor";
 import { MongoInternals } from "meteor/mongo";
-import { ObjectId } from "mongodb"; // Natively available via Meteor's MongoDB driver
+import { ObjectId } from "mongodb";
 import { MCP_ERROR_CODES, createMongoError, dbOperationFailedError, invalidParamsError } from "./utils.js";
 
-// Helper to get the default DB instance from Meteor
+
 function getDefaultDB() {
   if (MongoInternals.defaultRemoteCollectionDriver && MongoInternals.defaultRemoteCollectionDriver.mongo && MongoInternals.defaultRemoteCollectionDriver.mongo.db) {
     return MongoInternals.defaultRemoteCollectionDriver.mongo.db;
   } else {
-    // Fallback for older Meteor versions or different setups, though less common for default DB
-    // This might require manual MONGO_URL parsing if not using the default driver's access
+
     console.warn("Could not access default MongoDB instance via MongoInternals. Ensure MONGO_URL is set.");
-    // Attempt to connect manually if absolutely necessary, but this is not ideal for default DB
-    // For specific, non-default DBs, a new MongoClient would be used.
+
     throw createMongoError(MCP_ERROR_CODES.SERVER_ERROR_DB_CONNECTION_FAILED, "Default MongoDB instance not accessible.");
   }
 }
@@ -154,7 +152,7 @@ export async function count_documents(params, dbInstance) {
 }
 
 export async function list_collections(params, dbInstance) {
-  const { database } = params; // Optional: allow specifying a different database
+  const { database } = params; 
   const db = dbInstance || getDefaultDB();
   try {
     const currentDb = database ? db.client.db(database) : db;
@@ -322,7 +320,4 @@ export async function run_aggregation(params, dbInstance) {
   }
 }
 
-// Note: ObjectId is directly available from 'mongodb' package which Meteor uses.
-// No need for a separate connection.js for MongoDB if using Meteor's default DB.
-// The tools will use MongoInternals.defaultRemoteCollectionDriver().mongo.db by default.
 
