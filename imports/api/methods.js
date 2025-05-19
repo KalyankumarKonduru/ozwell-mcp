@@ -1,34 +1,17 @@
-// Updated methods.js to implement the new document workflow
+// imports/api/methods.js - updated version
+
 import { Meteor } from "meteor/meteor";
 import { check } from "meteor/check";
 import { Messages } from "./messages.js";
-import { mcpOzwellClient } from "../mcp/client.js"; 
+import { mcpOzwellClient, createToolAwareSystemPrompt, executeToolsFromResponse, cleanResponseText } from "../mcp/client.js"; 
 import { MongoInternals } from "meteor/mongo";
 
 import * as mongoTools from "../server/integrations/mongodb/tools.js";
 import * as esTools from "../server/integrations/elasticsearch/tools.js";
 import { extractTextFromFile, chunkText, generateEmbeddingsForChunks, extractStructuredData } from "../mcp/document-processor.js";
 
-// RAG Configuration
-const RAG_CONFIG = {
-  KEYWORDS: [
-    // More flexible keywords
-    "search documents for",
-    "what does document x say about",
-    "find info on",
-    "according to my files",
-    "in my records",
-    "check my notes on",
-    "using my documents",
-    "look in my files",
-    "based on my documents",
-    "show me documents related to",
-    "tell me about (.+?) from my documents",
-    "what do my files say about",
-    "search for",
-    "find documents about"
-  ],
-
+// Define document processing config (replacing RAG_CONFIG)
+const DOC_PROCESSING_CONFIG = {
   ELASTICSEARCH_INDEX: Meteor.settings.private?.RAG_ELASTICSEARCH_INDEX || "ozwell_documents",
   ELASTICSEARCH_INDEX_CHUNKS: Meteor.settings.private?.RAG_ELASTICSEARCH_INDEX_CHUNKS || "ozwell_document_chunks",
   ELASTICSEARCH_SEARCH_FIELDS: Meteor.settings.private?.RAG_ELASTICSEARCH_SEARCH_FIELDS || ["title", "text_content", "summary"],
@@ -41,56 +24,6 @@ const RAG_CONFIG = {
   MAX_CHUNKS: Meteor.settings.private?.RAG_MAX_CHUNKS || 50,
 };
 
-function detectRagKeywords(text) {
-  const lowerText = text.toLowerCase();
-  return RAG_CONFIG.KEYWORDS.some(keyword => {
-
-    return lowerText.includes(keyword.replace(" (.+?) ", " ").replace(" x ", " ")); // Basic normalization for matching
-  });
-}
-
-function extractSearchQuery(text) {
-  const lowerText = text.toLowerCase();
-  let bestMatchKeyword = "";
-
-  // Find the longest matching keyword to strip accurately
-  for (const keyword of RAG_CONFIG.KEYWORDS) {
-    const normalizedKeyword = keyword.replace(" (.+?) ", " ").replace(" x ", " ").toLowerCase();
-    if (lowerText.startsWith(normalizedKeyword)) {
-      if (normalizedKeyword.length > bestMatchKeyword.length) {
-        bestMatchKeyword = normalizedKeyword;
-      }
-    }
-  }
-
-  if (bestMatchKeyword) {
-    // Find the original keyword casing/structure for accurate length stripping
-    const originalKeyword = RAG_CONFIG.KEYWORDS.find(k => k.toLowerCase().replace(" (.+?) ", " ").replace(" x ", " ") === bestMatchKeyword);
-    if (originalKeyword) {
-
-        let query = text.substring(originalKeyword.length).trim();
-
-        if (originalKeyword.includes("from my documents")) {
-            query = query.replace(/from my documents$/i, "").trim();
-        }
-         if (originalKeyword.includes("say about")) {
-
-        }
-        return query || text; // return original text if query becomes empty
-    }
-  }
-  
-
-  if (lowerText.includes("search for")) {
-    return text.substring(lowerText.indexOf("search for") + "search for".length).trim();
-  }
-  if (lowerText.includes("find documents about")) {
-    return text.substring(lowerText.indexOf("find documents about") + "find documents about".length).trim();
-  }
-
-  return text; 
-}
-
 // MongoDB Collections for storing documents and chunks
 const Documents = new Mongo.Collection('documents');
 const DocumentChunks = new Mongo.Collection('document_chunks');
@@ -102,6 +35,9 @@ Meteor.startup(() => {
     DocumentChunks.createIndex({ "document_id": 1 });
     DocumentChunks.createIndex({ "chunk_index": 1 });
     DocumentChunks.createIndex({ "text": "text" });
+    
+    console.log("Created indexes for Documents and DocumentChunks collections");
+    console.log("Using Elasticsearch index:", DOC_PROCESSING_CONFIG.ELASTICSEARCH_INDEX);
   }
 });
 
@@ -129,10 +65,8 @@ Meteor.methods({
 
     // If a file was uploaded, process it
     if (fileUploadInfo) {
-
       const documentId = new Mongo.ObjectID()._str;
       
-
       await Messages.insertAsync({
         text: `Processing document "${fileUploadInfo.name}"...`,
         createdAt: new Date(),
@@ -141,10 +75,8 @@ Meteor.methods({
         type: "processing",
       });
 
-
       this.unblock(); 
       
-
       try {
         // Step 1: Convert base64 to buffer
         const fileBuffer = Buffer.from(fileUploadInfo.data, 'base64');
@@ -206,11 +138,12 @@ Meteor.methods({
           type: "processing",
         });
         
+        // Changed RAG_CONFIG to DOC_PROCESSING_CONFIG
         const textChunks = chunkText(
           extractionResult.text, 
-          RAG_CONFIG.CHUNK_SIZE, 
-          RAG_CONFIG.CHUNK_OVERLAP, 
-          RAG_CONFIG.MAX_CHUNKS
+          DOC_PROCESSING_CONFIG.CHUNK_SIZE, 
+          DOC_PROCESSING_CONFIG.CHUNK_OVERLAP, 
+          DOC_PROCESSING_CONFIG.MAX_CHUNKS
         );
         
         // Step 6: Generate embeddings for the chunks
@@ -283,17 +216,17 @@ Meteor.methods({
           esDocument.embedding_vector = chunksWithEmbeddings[0].embedding;
         }
         
-        // Index in Elasticsearch
+        // Index in Elasticsearch - Changed RAG_CONFIG to DOC_PROCESSING_CONFIG
         const esIndexResult = await esTools.index_document({
-          index: RAG_CONFIG.ELASTICSEARCH_INDEX,
+          index: DOC_PROCESSING_CONFIG.ELASTICSEARCH_INDEX,
           document_body: esDocument
         });
         
-        // Step 10: Index chunks in Elasticsearch
+        // Step 10: Index chunks in Elasticsearch - Changed RAG_CONFIG to DOC_PROCESSING_CONFIG
         for (const chunk of chunksWithEmbeddings) {
           if (chunk.embedding) {
             await esTools.index_document({
-              index: RAG_CONFIG.ELASTICSEARCH_INDEX_CHUNKS,
+              index: DOC_PROCESSING_CONFIG.ELASTICSEARCH_INDEX_CHUNKS,
               document_body: {
                 document_id: documentId,
                 chunk_index: chunk.index,
@@ -347,16 +280,39 @@ Based on this information, please:
 3. Offer suggestions based on the document type (${(structuredData.detection.documentType || ["unknown"]).join(", ")})`;
           
           try {
-            const ozwellResponse = await mcpOzwellClient.sendMessageToOzwell(ozwellPrompt);
+            // Add system prompt for tool awareness
+            const enhancedPrompt = `${ozwellPrompt}\n\n${createToolAwareSystemPrompt()}`;
+            
+            const ozwellResponse = await mcpOzwellClient.sendMessageToOzwell(enhancedPrompt);
             const aiText = ozwellResponse.answer || ozwellResponse.responseText || "Document processing complete.";
             
-            await Messages.insertAsync({
-              text: aiText,
-              createdAt: new Date(),
-              userId: "ozwell-ai",
-              owner: "Ozwell AI",
-              type: "ai",
-            });
+            // Clean the response text to remove any JSON code blocks
+            const cleanedText = cleanResponseText(aiText);
+            
+            try {
+              // Display Ozwell's response to the user
+              await Messages.insertAsync({
+                text: cleanedText,
+                createdAt: new Date(),
+                userId: "ozwell-ai",
+                owner: "Ozwell AI",
+                type: "ai",
+              });
+              
+              // Execute tools based on Ozwell's response
+              console.log("Attempting to execute tools from Ozwell response");
+              await executeToolsFromResponse(ozwellResponse);
+            } catch (error) {
+              console.error("Error communicating with AI or executing tools:", error);
+              await Messages.insertAsync({
+                text: `Error: ${error.message}`,
+                createdAt: new Date(),
+                userId: "system-error",
+                owner: "System",
+                type: "error",
+              });
+              throw new Meteor.Error("api-error", `Failed to process message: ${error.message}`);
+            }
           } catch (error) {
             console.error("Error getting Ozwell analysis:", error);
           }
@@ -377,243 +333,51 @@ Based on this information, please:
     }
 
     // Handle regular text messages (without file upload)
-    const isRagQuery = detectRagKeywords(text);
-    let ozwellPrompt = text;
-    let ragContextAvailable = false;
-
-    if (isRagQuery) {
-      const searchQuery = extractSearchQuery(text);
-      let searchResults = null;
+    try {
+      // Enhance the prompt with tool instructions
+      const enhancedPrompt = `${text}\n\n${createToolAwareSystemPrompt()}`;
       
-      if (!searchQuery || searchQuery.toLowerCase() === text.toLowerCase()) {
-        // If extraction didn't yield a more specific query, or if it's too broad,
-        // maybe we shouldn't proceed or should ask for clarification.
-        // For now, we proceed but log this.
-        console.log("RAG triggered, but extracted search query is same as input or empty: ", searchQuery);
-      }
-
+      // Send enhanced prompt to Ozwell
+      const ozwellResponse = await mcpOzwellClient.sendMessageToOzwell(enhancedPrompt);
+      
+      // Get the AI's text response and clean it
+      const aiText = ozwellResponse.answer || ozwellResponse.responseText || "Ozwell LLM response received.";
+      const cleanedText = cleanResponseText(aiText);
+      
+      // Display the cleaned response to the user
       await Messages.insertAsync({
-        text: `Searching documents for: "${searchQuery}"...`,
+        text: cleanedText,
         createdAt: new Date(),
-        userId: "system-rag",
-        owner: "System",
-        type: "system-info",
+        userId: "ozwell-ai",
+        owner: "Ozwell AI",
+        type: "ai",
       });
-
+      
+      // Attempt to execute tools from Ozwell's response
+      console.log("Attempting to execute tools from Ozwell response");
       try {
-        let esResponse;
-        if (RAG_CONFIG.USE_VECTOR_SEARCH) {
-          // First, we'll need to generate an embedding for the search query
-          const { generateEmbedding } = await import("../mcp/embeddings.js");
-          const queryEmbedding = await generateEmbedding(searchQuery);
-          
-          // First, try to match chunks for more precise results
-          const chunkResponse = await esTools.vector_search_documents({
-            index: RAG_CONFIG.ELASTICSEARCH_INDEX_CHUNKS,
-            vector_field: RAG_CONFIG.VECTOR_FIELD,
-            query_vector: queryEmbedding,
-            k: RAG_CONFIG.MAX_SNIPPETS * 2, // Get more results to have variety
-            _source: ["text", "document_id", "title", "chunk_index"],
-          });
-          
-          // Get the document IDs from the chunks
-          const documentIds = [...new Set(
-            (chunkResponse?.hits?.hits || [])
-              .map(hit => hit._source?.document_id)
-              .filter(id => id)
-          )];
-          
-          // If we found documents via chunks, get the full documents
-          if (documentIds.length > 0) {
-            esResponse = await esTools.search_documents({
-              index: RAG_CONFIG.ELASTICSEARCH_INDEX,
-              query_body: {
-                query: {
-                  terms: {
-                    document_id: documentIds
-                  }
-                }
-              },
-              _source: RAG_CONFIG.ELASTICSEARCH_SOURCE_FIELDS,
-              size: RAG_CONFIG.MAX_SNIPPETS,
-            });
-            
-            // Augment the results with the matching chunks
-            if (esResponse?.hits?.hits) {
-              for (const doc of esResponse.hits.hits) {
-                const docId = doc._source?.document_id;
-                if (docId) {
-                  // Find all chunks for this document
-                  const matchingChunks = chunkResponse.hits.hits
-                    .filter(chunk => chunk._source?.document_id === docId)
-                    .map(chunk => ({
-                      text: chunk._source?.text,
-                      index: chunk._source?.chunk_index
-                    }));
-                  
-                  if (matchingChunks.length > 0) {
-                    doc._source.matching_chunks = matchingChunks;
-                  }
-                }
-              }
-            }
-          } else {
-            // Fallback to searching full documents
-            esResponse = await esTools.vector_search_documents({
-              index: RAG_CONFIG.ELASTICSEARCH_INDEX,
-              vector_field: RAG_CONFIG.VECTOR_FIELD,
-              query_vector: queryEmbedding,
-              k: RAG_CONFIG.MAX_SNIPPETS,
-              _source: RAG_CONFIG.ELASTICSEARCH_SOURCE_FIELDS,
-            });
-          }
-        } else {
-          // Traditional keyword search
-          esResponse = await esTools.search_documents({
-            index: RAG_CONFIG.ELASTICSEARCH_INDEX,
-            query_body: {
-              query: {
-                multi_match: {
-                  query: searchQuery,
-                  fields: RAG_CONFIG.ELASTICSEARCH_SEARCH_FIELDS,
-                  type: "best_fields",
-                  fuzziness: "AUTO"
-                },
-              },
-            },
-            _source: RAG_CONFIG.ELASTICSEARCH_SOURCE_FIELDS,
-            size: RAG_CONFIG.MAX_SNIPPETS,
-          });
-        }
-        
-        searchResults = esResponse?.hits?.hits || []; 
-
-      } catch (integrationError) {
-        console.error("Error calling integrated Elasticsearch tool for RAG:", integrationError);
+        await executeToolsFromResponse(ozwellResponse);
+      } catch (execError) {
+        console.error("Error executing tools:", execError);
         await Messages.insertAsync({
-          text: `Error searching documents: ${integrationError.reason || integrationError.message}`,
+          text: `Error executing tool: ${execError.message}`,
           createdAt: new Date(),
           userId: "system-error",
           owner: "System",
           type: "error",
         });
       }
-
-      if (searchResults && searchResults.length > 0) {
-        let contextSnippets = "Retrieved context from your documents:\n\n";
-        
-        searchResults.slice(0, RAG_CONFIG.MAX_SNIPPETS).forEach((hit, index) => {
-          const source = hit._source || {};
-          let snippetText = `Document ${index + 1}: `;
-          
-          if (source.title) {
-            snippetText += `"${source.title}"; `;
-          }
-          
-          // If we have matching chunks, use those
-          if (source.matching_chunks && source.matching_chunks.length > 0) {
-            snippetText += `\nRelevant passages:\n`;
-            
-            source.matching_chunks.slice(0, 2).forEach((chunk, cIndex) => {
-              snippetText += `Passage ${cIndex + 1}: ${chunk.text.substring(0, 300)}${chunk.text.length > 300 ? "..." : ""}\n`;
-            });
-          } else {
-            // Otherwise use the full text or summary
-            const content = source.text_content || source.summary || JSON.stringify(source).substring(0, 200) + "..."; 
-            snippetText += `${content.substring(0, 500)}${content.length > 500 ? "..." : ""}\n`;
-          }
-          
-          contextSnippets += snippetText + "\n";
-        });
-        
-        ozwellPrompt = `User question: ${text}\n\n${contextSnippets}\n\nBased on the provided context from the documents, please answer the user's question. If the context doesn't contain enough information to fully answer the question, please state this clearly and answer based on what you can find in the provided context.`;
-        ragContextAvailable = true;
-
-        await Messages.insertAsync({
-          text: `Found relevant information in your documents. Asking Ozwell for an answer...`,
-          createdAt: new Date(),
-          userId: "system-rag",
-          owner: "System",
-          type: "system-info",
-        });
-
-      } else {
-        await Messages.insertAsync({
-          text: `I couldn't find any specific information in your documents related to your query: "${searchQuery}"`,
-          createdAt: new Date(),
-          userId: "system-rag",
-          owner: "System",
-          type: "system-info",
-        });
-        
-        // Continue with regular processing but inform the LLM that no documents were found
-        ozwellPrompt = `User asked: ${text}\n\nI searched for documents related to "${searchQuery}" but couldn't find any relevant information in the user's document store. Please respond to the user's query based on your general knowledge, and mention that no matching documents were found.`;
-      }
-    }
-
-    if (!isRagQuery || (isRagQuery && ragContextAvailable)) {
-      try {
-        const ozwellResponse = await mcpOzwellClient.sendMessageToOzwell(ozwellPrompt);
-        const aiText = ozwellResponse.answer || ozwellResponse.responseText || "Ozwell LLM response received.";
-
-        await Messages.insertAsync({
-          text: aiText,
-          createdAt: new Date(),
-          userId: "ozwell-ai",
-          owner: "Ozwell AI",
-          type: "ai",
-        });
-
-        if (ozwellResponse.mcp_instructions && !isRagQuery) {
-          const instruction = ozwellResponse.mcp_instructions;
-          let mcpResultText = "";
-          try {
-            let result;
-            if (instruction.target === "mongodb" && instruction.tool && instruction.params) {
-              if (mongoTools[instruction.tool]) {
-                result = await mongoTools[instruction.tool](instruction.params);
-                mcpResultText = `MongoDB Integrated Tool (${instruction.tool}) Result: ${JSON.stringify(result, null, 2)}`;
-              } else {
-                throw new Meteor.Error("method-not-found", `MongoDB integrated tool "${instruction.tool}" not found.`);
-              }
-            } else if (instruction.target === "elasticsearch" && instruction.tool && instruction.params) {
-              if (esTools[instruction.tool]) {
-                result = await esTools[instruction.tool](instruction.params);
-                mcpResultText = `Elasticsearch Integrated Tool (${instruction.tool}) Result: ${JSON.stringify(result, null, 2)}`;
-              } else {
-                throw new Meteor.Error("method-not-found", `Elasticsearch integrated tool "${instruction.tool}" not found.`);
-              }
-            }
-            if (mcpResultText) {
-              await Messages.insertAsync({
-                text: mcpResultText,
-                createdAt: new Date(),
-                userId: "system-mcp",
-                owner: "MCP System",
-                type: "mcp-response",
-              });
-            }
-          } catch (mcpError) {
-            await Messages.insertAsync({
-              text: `Error during integrated MCP call (${instruction.target} - ${instruction.tool}): ${mcpError.reason || mcpError.message}`,
-              createdAt: new Date(),
-              userId: "system-error",
-              owner: "System",
-              type: "error",
-            });
-          }
-        }
-        return ozwellResponse;
-      } catch (error) {
-        await Messages.insertAsync({
-          text: `Error communicating with AI: ${error.message}`,
-          createdAt: new Date(),
-          userId: "system-error",
-          owner: "System",
-          type: "error",
-        });
-        throw new Meteor.Error("api-error", `Failed to process message: ${error.message}`);
-      }
+      
+      return ozwellResponse;
+    } catch (error) {
+      await Messages.insertAsync({
+        text: `Error communicating with AI: ${error.message}`,
+        createdAt: new Date(),
+        userId: "system-error",
+        owner: "System",
+        type: "error",
+      });
+      throw new Meteor.Error("api-error", `Failed to process message: ${error.message}`);
     }
   },
 
@@ -666,6 +430,87 @@ Based on this information, please:
       });
       if (error instanceof Meteor.Error) throw error;
       throw new Meteor.Error("mcp-es-error-integrated", `Integrated Elasticsearch Tool Error: ${error.message}`);
+    }
+  },
+  
+  // Add a test method for direct tool execution
+  async "mcp.testSearch"(searchTerm) {
+    check(searchTerm, String);
+    console.log(`Testing search for: ${searchTerm}`);
+    
+    try {
+      await Messages.insertAsync({
+        text: `Testing search for: "${searchTerm}"`,
+        createdAt: new Date(),
+        userId: "system-test",
+        owner: "System",
+        type: "system-info",
+      });
+      
+      const result = await esTools.search_documents({
+        index: DOC_PROCESSING_CONFIG.ELASTICSEARCH_INDEX,
+        query_body: {
+          query: {
+            match: {
+              text_content: searchTerm
+            }
+          }
+        }
+      });
+      
+      if (result && result.hits && result.hits.hits.length > 0) {
+        const hits = result.hits.hits;
+        
+        await Messages.insertAsync({
+          text: `Found ${hits.length} results for "${searchTerm}"`,
+          createdAt: new Date(),
+          userId: "system-elasticsearch",
+          owner: "Elasticsearch",
+          type: "system-info",
+        });
+        
+        // Display each hit
+        for (let i = 0; i < Math.min(hits.length, 3); i++) {
+          const hit = hits[i];
+          const source = hit._source || {};
+          
+          let content = `Result ${i+1}:\n`;
+          if (source.title) content += `Title: ${source.title}\n`;
+          if (source.text_content) {
+            const snippet = source.text_content.substring(0, 300) + 
+              (source.text_content.length > 300 ? "..." : "");
+            content += `Content: ${snippet}`;
+          }
+          
+          await Messages.insertAsync({
+            text: content,
+            createdAt: new Date(),
+            userId: "system-elasticsearch",
+            owner: "Elasticsearch (Integrated)",
+            type: "mcp-response",
+          });
+        }
+      } else {
+        await Messages.insertAsync({
+          text: `No results found for "${searchTerm}"`,
+          createdAt: new Date(),
+          userId: "system-elasticsearch",
+          owner: "Elasticsearch",
+          type: "system-info",
+        });
+      }
+      
+      return { success: true, resultsFound: result?.hits?.hits?.length || 0 };
+    } catch (error) {
+      console.error("Error testing search:", error);
+      await Messages.insertAsync({
+        text: `Error testing search: ${error.message}`,
+        createdAt: new Date(),
+        userId: "system-error",
+        owner: "System",
+        type: "error",
+      });
+      throw error;
     }
   }
 });

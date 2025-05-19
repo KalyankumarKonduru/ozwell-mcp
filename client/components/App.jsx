@@ -211,11 +211,30 @@ export default function App() {
         {isLoading && <p>Loading messages...</p>}
         
         {messages.map((msg) => (
-          <div key={msg._id} className={`message ${msg.type || 'default'} owner-${msg.owner?.replace(/\s+/g, '-').toLowerCase()}`}>
-            <div className="message-owner">{msg.owner}</div>
-            <div className="message-text">{msg.text}</div>
-          </div>
-        ))}
+  <div 
+    key={msg._id} 
+    className={`message ${msg.type || 'default'} owner-${msg.owner?.replace(/\s+/g, '-').toLowerCase()}`}
+  >
+    <div className="message-owner">{msg.owner}</div>
+    <div className="message-text">
+      {/* Format the message text based on its type */}
+      {msg.type === 'mcp-response' && msg.text.startsWith('{') ? (
+        <pre style={{
+          whiteSpace: 'pre-wrap', 
+          overflow: 'auto',
+          maxHeight: '300px',
+          background: '#f5f5f5',
+          padding: '10px',
+          borderRadius: '5px'
+        }}>
+          {msg.text}
+        </pre>
+      ) : (
+        msg.text
+      )}
+    </div>
+  </div>
+))}
         
         <div ref={messagesEndRef} />
       </div>

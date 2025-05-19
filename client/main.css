@@ -420,3 +420,54 @@ h1 {
 .structured-data-value {
   color: #1565c0;
 }
+/* Enhance display of tool response messages */
+/* Add or update these styles in client/main.css */
+
+/* System info messages */
+.message.system-info {
+  background-color: #e8f5e9;
+  color: #2e7d32;
+  align-self: center;
+  font-style: italic;
+  font-size: 0.9em;
+  max-width: 90%;
+  margin: 5px auto;
+  padding: 6px 12px;
+  border-radius: 12px;
+}
+
+/* MCP response messages (tool results) */
+.message.mcp-response {
+  background-color: #fff8e1;
+  color: #ff8f00;
+  align-self: flex-start;
+  margin-right: auto;
+  font-family: monospace;
+  white-space: pre-wrap;
+  max-width: 90%;
+  padding: 10px 15px;
+  border-radius: 15px;
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+
+/* Format pre blocks in MCP responses */
+.message.mcp-response pre {
+  margin: 5px 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background-color: rgba(255, 255, 255, 0.3);
+  padding: 8px;
+  border-radius: 6px;
+}
+
+/* Error messages */
+.message.error {
+  background-color: #ffebee;
+  color: #c62828;
+  align-self: center;
+  margin: 5px auto;
+  padding: 8px 12px;
+  border-radius: 12px;
+  max-width: 90%;
+}
