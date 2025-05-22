@@ -5,15 +5,18 @@
   "private": {
     "OZWELL_API_KEY": "BHSK-sandbox-FC5AWzqhZWwJvJqznpYYHVazREF0wKDL_BQL1vk_",
     "OZWELL_API_URL": "https://ai.bluehive.com/api",
-    "MONGO_URL": "mongodb://localhost:27017/ozwell",
     
-    "MONGODB_MCP_SERVER_URL": "http://localhost:3000/mcp/mongo",
-    "ELASTICSEARCH_MCP_SERVER_URL": "http://localhost:3000/mcp/elasticsearch",
+    "_comment_mongo": "MongoDB Atlas connection for integrated fallback",
+    "MONGO_URL": "mongodb+srv://kalyankitkat555:kalyankitkat5@cluster0.yh9dreh.mongodb.net/ozwell?retryWrites=true&w=majority&appName=Cluster0",
+    
+    "_comment_mcp_servers": "External MCP server URLs",
+    "MONGODB_MCP_SERVER_URL": "http://localhost:3001/mcp",
+    "ELASTICSEARCH_MCP_SERVER_URL": "http://localhost:3002/mcp",
 
-    "ELASTICSEARCH_NODE": "https://localhost:9200", 
-    "ELASTICSEARCH_USERNAME": "elastic", 
-    "ELASTICSEARCH_PASSWORD": "hZwv7oRcWlde6R2OW+Co", 
-    "ELASTICSEARCH_INSECURE_SSL": true, 
+    "_comment_elasticsearch": "Elasticsearch Cloud config for integrated fallback",
+    "ELASTICSEARCH_NODE": "https://0267cb4829484875ab688566f046c21a.us-central1.gcp.cloud.es.io:443", 
+    "ELASTICSEARCH_API_KEY": "aXd3NzlKWUJWc2YwU1VOQmFfemM6NVI4NDZTZVQtOTd2WXV1ZDBudGVWUQ==",
+    "ELASTICSEARCH_INSECURE_SSL": false,
 
     "RAG_ELASTICSEARCH_INDEX": "ozwell_documents",
     "RAG_ELASTICSEARCH_INDEX_CHUNKS": "ozwell_document_chunks",

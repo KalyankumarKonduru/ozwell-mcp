@@ -17,155 +17,148 @@ const MAX_CHUNKS = 50; // Maximum number of chunks per document
  * @param {String} fileType - MIME type
  * @returns {Promise<Object>} Extracted text and metadata
  */
+// Fix for imports/mcp/document-processor.js
+// Replace the PDF processing section with this:
+
 export async function extractTextFromFile(fileBuffer, fileName, fileType) {
   try {
     let extractedText = "";
     let extractionMethod = "none";
     let extractionSuccess = false;
     
-    // Determine file type and extract text accordingly
-    if (fileType === "text/plain" || fileName.endsWith('.txt')) {
-      extractedText = fileBuffer.toString('utf8');
-      extractionMethod = "text_direct";
-      extractionSuccess = true;
-    } 
-    else if (fileType === "application/pdf" || fileName.endsWith('.pdf')) {
+    // PDF Processing (FIXED VERSION)
+    if (fileType === "application/pdf" || fileName.endsWith('.pdf')) {
+      console.log(`📄 Processing PDF: ${fileName} (${fileBuffer.length} bytes)`);
+      
+      // Method 1: Standard pdf-parse with proper error handling
       try {
-        // First try to repair the PDF if needed
-        const repairedBuffer = await repairPDF(fileBuffer);
+        const pdfParse = require('pdf-parse');
         
-        // Try the standard PDF parser
-        let pdfParse;
-        try {
-          pdfParse = require('pdf-parse');
-        } catch (e) {
-          console.warn("pdf-parse module not found, attempting to import dynamically");
-          // Try dynamic import if require fails (for newer Meteor versions)
-          const pdfParseModule = await import('pdf-parse');
-          pdfParse = pdfParseModule.default;
-        }
+        // Basic parsing first
+        const pdfData = await pdfParse(fileBuffer);
+        extractedText = pdfData.text || '';
         
-        if (!pdfParse) {
-          throw new Error("Could not load pdf-parse module");
-        }
+        console.log(`📄 PDF parse result: ${extractedText.length} characters extracted`);
+        console.log(`📄 First 100 chars: ${extractedText.substring(0, 100)}`);
         
-        // PDF.js options object
-        const options = {
-          // Some PDFs need external page resource dictionaries
-          pagerender: function(pageData) {
-            if (!pageData.getTextContent) {
-              return Promise.resolve('');
-            }
-            
-            return pageData.getTextContent({ normalizeWhitespace: true })
-              .then(function(textContent) {
-                let text = '';
-                let lastY = -1;
-                for (let item of textContent.items) {
-                  if (lastY !== item.transform[5]) {
-                    text += '\n';
-                  }
-                  text += item.str;
-                  lastY = item.transform[5];
-                }
-                return text;
-              })
-              .catch(function() {
-                return ''; // Return empty string on error rather than failing
-              });
-          }
-        };
-        
-        try {
-          const pdfData = await pdfParse(repairedBuffer, options);
-          extractedText = pdfData.text || '';
+        // Check if we got actual text (not binary data)
+        if (extractedText && extractedText.length > 0 && isReadableText(extractedText)) {
           extractionMethod = "pdf_parse_standard";
-          
-          // Sometimes pdf-parse returns successfully but with empty text
-          if (!extractedText || extractedText.trim().length === 0) {
-            throw new Error("PDF parsing returned empty text");
-          }
-          
           extractionSuccess = true;
-          
-          // Attempt to extract additional metadata if available
-          const metadata = {
-            pageCount: pdfData.numpages || null,
-            info: pdfData.info || null,
-            version: pdfData.pdfVersion || null
-          };
           
           return {
             text: extractedText,
             method: extractionMethod,
             success: extractionSuccess,
-            metadata
+            metadata: {
+              pageCount: pdfData.numpages || null,
+              info: pdfData.info || null,
+              version: pdfData.version || null
+            }
           };
-        } catch (standardParseError) {
-          console.error("Standard PDF parsing failed:", standardParseError);
-          
-          // Try strategy 1: Extract text from broken PDF using regex patterns
-          console.log("Attempting fallback PDF text extraction method 1...");
-          extractedText = await extractTextFromBrokenPDF(repairedBuffer);
-          
-          if (extractedText && extractedText.trim().length > 10) {
-            extractionMethod = "pdf_parse_fallback_regex";
-            extractionSuccess = true;
-            return {
-              text: extractedText,
-              method: extractionMethod,
-              success: extractionSuccess,
-              metadata: {
-                note: "Extracted using fallback regex method due to PDF issues"
-              }
-            };
-          }
-          
-          // Try strategy 2: Extract text directly from PDF content streams
-          console.log("Attempting fallback PDF text extraction method 2...");
-          extractedText = extractPdfStreamText(repairedBuffer);
-          
-          if (extractedText && extractedText.trim().length > 10) {
-            extractionMethod = "pdf_parse_fallback_streams";
-            extractionSuccess = true;
-            return {
-              text: extractedText,
-              method: extractionMethod,
-              success: extractionSuccess,
-              metadata: {
-                note: "Extracted directly from PDF content streams due to severe PDF corruption"
-              }
-            };
-          }
-          
-          // If we reach here, both fallback methods failed
-          throw new Error("All PDF parsing methods failed");
+        } else {
+          console.warn("⚠️ PDF parsing returned unreadable text or binary data");
         }
       } catch (pdfError) {
-        console.error("All PDF extraction methods failed:", pdfError);
-        extractedText = `Error extracting text from PDF. The file may be corrupted or password protected. Details: ${pdfError.message}`;
-        extractionMethod = "pdf_parse_failed";
-        extractionSuccess = false;
+        console.error("❌ Standard PDF parsing failed:", pdfError.message);
       }
+      
+      // Method 2: Try with different pdf-parse options
+      try {
+        console.log("🔄 Trying PDF parse with alternative options...");
+        const pdfParse = require('pdf-parse');
+        
+        const options = {
+          // More robust parsing options
+          pagerender: function(pageData) {
+            if (!pageData.getTextContent) {
+              return Promise.resolve('');
+            }
+            
+            return pageData.getTextContent({ 
+              normalizeWhitespace: true,
+              disableCombineTextItems: false 
+            }).then(function(textContent) {
+              let text = '';
+              let lastY = -1;
+              
+              for (let item of textContent.items) {
+                // Add line breaks for different Y positions
+                if (lastY !== -1 && Math.abs(lastY - item.transform[5]) > 5) {
+                  text += '\n';
+                }
+                text += item.str;
+                if (item.hasEOL) {
+                  text += '\n';
+                } else {
+                  text += ' ';
+                }
+                lastY = item.transform[5];
+              }
+              
+              return text.trim();
+            }).catch(function(error) {
+              console.warn("Text content extraction failed:", error);
+              return '';
+            });
+          }
+        };
+        
+        const pdfData = await pdfParse(fileBuffer, options);
+        extractedText = pdfData.text || '';
+        
+        console.log(`📄 Alternative PDF parse result: ${extractedText.length} characters`);
+        
+        if (extractedText && extractedText.length > 0 && isReadableText(extractedText)) {
+          extractionMethod = "pdf_parse_alternative";
+          extractionSuccess = true;
+          
+          return {
+            text: extractedText,
+            method: extractionMethod,
+            success: extractionSuccess,
+            metadata: {
+              pageCount: pdfData.numpages || null,
+              note: "Extracted using alternative PDF parsing method"
+            }
+          };
+        }
+      } catch (altError) {
+        console.error("❌ Alternative PDF parsing failed:", altError.message);
+      }
+      
+      // Method 3: Check if PDF is image-based (scanned)
+      try {
+        console.log("🔍 Checking if PDF contains only images...");
+        
+        // If we reach here, the PDF likely contains only images or is corrupted
+        extractedText = "This PDF appears to contain scanned images or is corrupted. Text extraction failed. Please ensure the PDF contains selectable text or use OCR software to convert it to a text-searchable PDF.";
+        extractionMethod = "pdf_image_or_corrupted";
+        extractionSuccess = false;
+        
+        return {
+          text: extractedText,
+          method: extractionMethod,
+          success: extractionSuccess,
+          metadata: {
+            note: "PDF appears to be image-based or corrupted"
+          }
+        };
+      } catch (error) {
+        console.error("❌ PDF analysis failed:", error);
+      }
+    }
+    
+    // Handle other file types (keep existing code)
+    else if (fileType === "text/plain" || fileName.endsWith('.txt')) {
+      extractedText = fileBuffer.toString('utf8');
+      extractionMethod = "text_direct";
+      extractionSuccess = true;
     } 
     else if (fileType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" || 
              fileName.endsWith('.docx')) {
       try {
-        let mammoth;
-        // Handle import in a Meteor-friendly way
-        try {
-          mammoth = require('mammoth');
-        } catch (e) {
-          console.warn("mammoth module not found, attempting to import dynamically");
-          // Try dynamic import if require fails (for newer Meteor versions)
-          const mammothModule = await import('mammoth');
-          mammoth = mammothModule.default;
-        }
-        
-        if (!mammoth) {
-          throw new Error("Could not load mammoth module");
-        }
-        
+        const mammoth = require('mammoth');
         const result = await mammoth.extractRawText({ buffer: fileBuffer });
         extractedText = result.value;
         extractionMethod = "mammoth_docx";
@@ -187,24 +180,9 @@ export async function extractTextFromFile(fileBuffer, fileName, fileType) {
              fileType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" || 
              fileName.endsWith('.xlsx')) {
       try {
-        let XLSX;
-        // Handle import in a Meteor-friendly way
-        try {
-          XLSX = require('xlsx');
-        } catch (e) {
-          console.warn("xlsx module not found, attempting to import dynamically");
-          // Try dynamic import if require fails (for newer Meteor versions)
-          const XLSXModule = await import('xlsx');
-          XLSX = XLSXModule.default;
-        }
-        
-        if (!XLSX) {
-          throw new Error("Could not load xlsx module");
-        }
-        
+        const XLSX = require('xlsx');
         const workbook = XLSX.read(fileBuffer, { type: 'buffer' });
         
-        // Convert all sheets to text
         extractedText = workbook.SheetNames.map(sheetName => {
           const sheet = workbook.Sheets[sheetName];
           const csv = XLSX.utils.sheet_to_csv(sheet);
@@ -248,7 +226,6 @@ export async function extractTextFromFile(fileBuffer, fileName, fileType) {
     }
     else if (fileType === "text/html" || fileName.endsWith('.html') || fileName.endsWith('.htm')) {
       try {
-        // Simple HTML text extraction - in production you might want to use a proper HTML parser
         extractedText = fileBuffer.toString('utf8')
           .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ' ')
           .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, ' ')
@@ -265,7 +242,7 @@ export async function extractTextFromFile(fileBuffer, fileName, fileType) {
       }
     }
     else {
-      extractedText = `File type ${fileType} is not directly supported for text extraction.`;
+      extractedText = `File type ${fileType} is not supported for text extraction.`;
       extractionMethod = "unsupported_format";
     }
     
@@ -285,6 +262,25 @@ export async function extractTextFromFile(fileBuffer, fileName, fileType) {
   }
 }
 
+/**
+ * Check if extracted text is readable (not binary data)
+ */
+function isReadableText(text) {
+  if (!text || typeof text !== 'string') {
+    return false;
+  }
+  
+  // Check for readable characters vs binary/control characters
+  const readableChars = text.match(/[a-zA-Z0-9\s.,!?;:()\-'"]/g) || [];
+  const totalChars = text.length;
+  
+  // If less than 50% of characters are readable, consider it binary data
+  const readableRatio = readableChars.length / totalChars;
+  
+  console.log(`📊 Text readability check: ${readableRatio.toFixed(2)} (${readableChars.length}/${totalChars})`);
+  
+  return readableRatio > 0.5;
+}
 /**
  * Chunk text into smaller pieces for better processing and embedding
  * @param {String} text - Full text to chunk

@@ -1,0 +1,36 @@
+{
+    "name": "ozwell-mcp-servers",
+    "version": "1.0.0",
+    "description": "Standalone MCP servers for MongoDB Atlas and Elasticsearch Cloud",
+    "type": "module",
+    "scripts": {
+        "start": "concurrently \"npm run start:mongo\" \"npm run start:elasticsearch\"",
+        "start:mongo": "node mongodb-server/server.js",
+        "start:elasticsearch": "node elasticsearch-server/server.js",
+        "dev": "concurrently \"npm run dev:mongo\" \"npm run dev:elasticsearch\"",
+        "dev:mongo": "nodemon mongodb-server/server.js",
+        "dev:elasticsearch": "nodemon elasticsearch-server/server.js",
+        "test": "echo \"No tests specified\" && exit 0"
+    },
+    "dependencies": {
+        "@elastic/elasticsearch": "^9.0.2",
+        "cors": "^2.8.5",
+        "dotenv": "^16.5.0",
+        "express": "^4.21.2",
+        "mongodb": "^6.16.0"
+    },
+    "devDependencies": {
+        "concurrently": "^8.2.2",
+        "nodemon": "^3.1.10"
+    },
+    "keywords": [
+        "mcp",
+        "model-context-protocol",
+        "mongodb",
+        "elasticsearch",
+        "ai",
+        "ozwell"
+    ],
+    "author": "Kalyankumar",
+    "license": "MIT"
+}
