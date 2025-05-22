@@ -1,9 +1,9 @@
-// imports/api/methods.js - CLEANED VERSION (External MCP Only)
+// imports/api/methods.js - Updated for MCP SDK
 
 import { Meteor } from "meteor/meteor";
 import { check } from "meteor/check";
 import { Messages } from "./messages.js";
-import { mcpOzwellClient, createToolAwareSystemPrompt, executeToolsFromResponse, cleanResponseText, mcpExternalClient } from "../mcp/client.js"; 
+import { mcpOzwellClient, createToolAwareSystemPrompt, executeToolsFromResponse, cleanResponseText, mcpSdkClient } from "../mcp/client.js"; 
 import { extractTextFromFile, chunkText, generateEmbeddingsForChunks, extractStructuredData } from "../mcp/document-processor.js";
 
 // Document processing config
@@ -97,16 +97,16 @@ Meteor.methods({
           processed: false,
         };
         
-        // Step 4: Insert into MongoDB via external MCP server
+        // Step 4: Insert into MongoDB via MCP SDK server
         await Messages.insertAsync({
-          text: `💾 Storing document metadata in MongoDB Atlas via MCP server...`,
+          text: `💾 Storing document metadata in MongoDB Atlas via MCP SDK server...`,
           createdAt: new Date(),
           userId: "system-process",
           owner: "Document Processor",
           type: "processing",
         });
         
-        await Meteor.callAsync('mcp.callMongoExternal', 'insert_document', {
+        await Meteor.callAsync('mcp.callMongoSdk', 'insert_document', {
           collection: 'documents',
           document: documentRecord
         });
@@ -138,7 +138,7 @@ Meteor.methods({
         
         const chunksWithEmbeddings = await generateEmbeddingsForChunks(textChunks);
         
-        // Step 7: Save chunks to MongoDB via external MCP server
+        // Step 7: Save chunks to MongoDB via MCP SDK server
         const chunkRecords = chunksWithEmbeddings.map(chunk => ({
           document_id: documentId,
           chunk_index: chunk.index,
@@ -148,9 +148,9 @@ Meteor.methods({
           created_at: new Date()
         }));
         
-        // Insert all chunks via external MCP server
+        // Insert all chunks via MCP SDK server
         if (chunkRecords.length > 0) {
-          await Meteor.callAsync('mcp.callMongoExternal', 'insert_document', {
+          await Meteor.callAsync('mcp.callMongoSdk', 'insert_document', {
             collection: 'document_chunks',
             document: chunkRecords
           });
@@ -167,9 +167,9 @@ Meteor.methods({
         
         const structuredData = await extractStructuredData(extractionResult.text, text);
         
-        // Step 9: Index document in Elasticsearch via external MCP server
+        // Step 9: Index document in Elasticsearch via MCP SDK server
         await Messages.insertAsync({
-          text: `🔗 Indexing document in Elasticsearch Cloud via MCP server...`,
+          text: `🔗 Indexing document in Elasticsearch Cloud via MCP SDK server...`,
           createdAt: new Date(),
           userId: "system-process",
           owner: "Document Processor",
@@ -200,13 +200,13 @@ Meteor.methods({
           esDocument.embedding_vector = chunksWithEmbeddings[0].embedding;
         }
         
-        // Index in Elasticsearch via external MCP server
-        await Meteor.callAsync('mcp.callElasticsearchExternal', 'index_document', {
+        // Index in Elasticsearch via MCP SDK server
+        await Meteor.callAsync('mcp.callElasticsearchSdk', 'index_document', {
           index: DOC_PROCESSING_CONFIG.ELASTICSEARCH_INDEX,
           document_body: esDocument
         });
         
-        // Step 10: Index chunks in Elasticsearch via external MCP server
+        // Step 10: Index chunks in Elasticsearch via MCP SDK server
         for (const chunk of chunksWithEmbeddings) {
           if (chunk.embedding) {
             const chunkDoc = {
@@ -220,7 +220,7 @@ Meteor.methods({
               uploaded_at: new Date()
             };
             
-            await Meteor.callAsync('mcp.callElasticsearchExternal', 'index_document', {
+            await Meteor.callAsync('mcp.callElasticsearchSdk', 'index_document', {
               index: DOC_PROCESSING_CONFIG.ELASTICSEARCH_INDEX_CHUNKS,
               document_body: chunkDoc
             });
@@ -228,7 +228,7 @@ Meteor.methods({
         }
         
         // Step 11: Update MongoDB document record to mark as processed
-        await Meteor.callAsync('mcp.callMongoExternal', 'update_documents', {
+        await Meteor.callAsync('mcp.callMongoSdk', 'update_documents', {
           collection: 'documents',
           query: { _id: documentId },
           update: { 
@@ -244,7 +244,7 @@ Meteor.methods({
         
         // Step 12: Final success message
         await Messages.insertAsync({
-          text: `✅ Document "${fileUploadInfo.name}" successfully processed via external MCP servers! ` +
+          text: `✅ Document "${fileUploadInfo.name}" successfully processed via MCP SDK servers! ` +
                 `Extracted ${extractionResult.text.length} characters of text and created ${chunkRecords.length} searchable chunks. ` +
                 `Document type detected: ${(structuredData.detection.documentType || ["unknown"]).join(", ")}.`,
           createdAt: new Date(),
@@ -269,7 +269,7 @@ Based on this information, please:
 2. Explain what the user can do with this document now (e.g., search for information in it)
 3. Offer suggestions based on the document type (${(structuredData.detection.documentType || ["unknown"]).join(", ")})
 
-The system uses external MCP servers for all database operations.`;
+The system uses MCP SDK servers for all database operations.`;
           
           try {
             // Add system prompt for tool awareness
@@ -290,11 +290,11 @@ The system uses external MCP servers for all database operations.`;
               type: "ai",
             });
             
-            // Execute tools based on Ozwell's response using external MCP servers
-            console.log("Attempting to execute tools from Ozwell response via external MCP servers");
+            // Execute tools based on Ozwell's response using MCP SDK servers
+            console.log("Attempting to execute tools from Ozwell response via MCP SDK servers");
             await executeToolsFromResponse(ozwellResponse);
           } catch (error) {
-            console.error("Error communicating with AI or executing external MCP tools:", error);
+            console.error("Error communicating with AI or executing MCP SDK tools:", error);
             await Messages.insertAsync({
               text: `❌ Error: ${error.message}`,
               createdAt: new Date(),
@@ -321,7 +321,7 @@ The system uses external MCP servers for all database operations.`;
 
     // Handle regular text messages (without file upload)
     try {
-      // Enhance the prompt with tool instructions for external MCP servers
+      // Enhance the prompt with tool instructions for MCP SDK servers
       const enhancedPrompt = `${text}\n\n${createToolAwareSystemPrompt()}`;
       
       // Send enhanced prompt to Ozwell
@@ -340,8 +340,8 @@ The system uses external MCP servers for all database operations.`;
         type: "ai",
       });
       
-      // Attempt to execute tools from Ozwell's response using external MCP servers
-      console.log("Attempting to execute tools from Ozwell response via external MCP servers");
+      // Attempt to execute tools from Ozwell's response using MCP SDK servers
+      console.log("Attempting to execute tools from Ozwell response via MCP SDK servers");
       await executeToolsFromResponse(ozwellResponse);
       
       return ozwellResponse;
@@ -357,107 +357,107 @@ The system uses external MCP servers for all database operations.`;
     }
   },
 
-  // External MCP server methods only
-  async "mcp.callMongoExternal"(toolName, params) {
+  // MCP SDK server methods
+  async "mcp.callMongoSdk"(toolName, params) {
     check(toolName, String);
     check(params, Object);
     
-    console.log(`📡 Calling external MongoDB MCP server tool: ${toolName}`, params);
+    console.log(`📡 Calling MongoDB MCP SDK server tool: ${toolName}`, params);
     try {
-      const result = await mcpExternalClient.callMongoDbMcp(toolName, params);
+      const result = await mcpSdkClient.callMongoDbMcp(toolName, params);
       
       await Messages.insertAsync({
-        text: `MongoDB MCP Server (${toolName}) Result: ${JSON.stringify(result, null, 2)}`,
+        text: `MongoDB MCP SDK Server (${toolName}) Result: ${JSON.stringify(result, null, 2)}`,
         createdAt: new Date(), 
         userId: "system-mcp", 
-        owner: "MongoDB MCP Server", 
+        owner: "MongoDB MCP SDK Server", 
         type: "mcp-response"
       });
       
       return result;
     } catch (error) {
-      console.error(`❌ Error calling external MongoDB MCP server (${toolName}):`, error);
+      console.error(`❌ Error calling MongoDB MCP SDK server (${toolName}):`, error);
       
       await Messages.insertAsync({
-        text: `❌ Error calling external MongoDB MCP server (${toolName}): ${error.reason || error.message}`,
+        text: `❌ Error calling MongoDB MCP SDK server (${toolName}): ${error.reason || error.message}`,
         createdAt: new Date(), 
         userId: "system-error", 
-        owner: "MCP Client", 
+        owner: "MCP SDK Client", 
         type: "error"
       });
       
-      throw new Meteor.Error("mcp-mongo-external-error", `External MongoDB MCP Server Error: ${error.message}`);
+      throw new Meteor.Error("mcp-mongo-sdk-error", `MongoDB MCP SDK Server Error: ${error.message}`);
     }
   },
 
-  async "mcp.callElasticsearchExternal"(toolName, params) {
+  async "mcp.callElasticsearchSdk"(toolName, params) {
     check(toolName, String);
     check(params, Object);
 
-    console.log(`📡 Calling external Elasticsearch MCP server tool: ${toolName}`, params);
+    console.log(`📡 Calling Elasticsearch MCP SDK server tool: ${toolName}`, params);
     try {
-      const result = await mcpExternalClient.callElasticsearchMcp(toolName, params);
+      const result = await mcpSdkClient.callElasticsearchMcp(toolName, params);
       
       await Messages.insertAsync({
-        text: `Elasticsearch MCP Server (${toolName}) Result: ${JSON.stringify(result, null, 2)}`,
+        text: `Elasticsearch MCP SDK Server (${toolName}) Result: ${JSON.stringify(result, null, 2)}`,
         createdAt: new Date(), 
         userId: "system-mcp", 
-        owner: "Elasticsearch MCP Server", 
+        owner: "Elasticsearch MCP SDK Server", 
         type: "mcp-response"
       });
       
       return result;
     } catch (error) {
-      console.error(`❌ Error calling external Elasticsearch MCP server (${toolName}):`, error);
+      console.error(`❌ Error calling Elasticsearch MCP SDK server (${toolName}):`, error);
       
       await Messages.insertAsync({
-        text: `❌ Error calling external Elasticsearch MCP server (${toolName}): ${error.reason || error.message}`,
+        text: `❌ Error calling Elasticsearch MCP SDK server (${toolName}): ${error.reason || error.message}`,
         createdAt: new Date(), 
         userId: "system-error", 
-        owner: "MCP Client", 
+        owner: "MCP SDK Client", 
         type: "error"
       });
       
-      throw new Meteor.Error("mcp-es-external-error", `External Elasticsearch MCP Server Error: ${error.message}`);
+      throw new Meteor.Error("mcp-es-sdk-error", `Elasticsearch MCP SDK Server Error: ${error.message}`);
     }
   },
 
-  // Health check methods for external MCP servers
-  async "mcp.checkExternalHealth"() {
+  // Health check methods for MCP SDK servers
+  async "mcp.checkSdkHealth"() {
     const results = {
-      mongodb: await mcpExternalClient.checkMongoDbMcpHealth(),
-      elasticsearch: await mcpExternalClient.checkElasticsearchMcpHealth()
+      mongodb: await mcpSdkClient.checkMongoDbMcpHealth(),
+      elasticsearch: await mcpSdkClient.checkElasticsearchMcpHealth()
     };
 
     // Display health check results
     await Messages.insertAsync({
-      text: `🏥 External MCP Server Health Check:\n` +
+      text: `🏥 MCP SDK Server Health Check:\n` +
             `MongoDB: ${results.mongodb.status}\n` +
             `Elasticsearch: ${results.elasticsearch.status}`,
       createdAt: new Date(),
       userId: "system-health",
-      owner: "MCP Health Check",
+      owner: "MCP SDK Health Check",
       type: "system-info",
     });
 
     return results;
   },
   
-  // Test method for external MCP server search
-  async "mcp.testExternalSearch"(searchTerm) {
+  // Test method for MCP SDK server search
+  async "mcp.testSdkSearch"(searchTerm) {
     check(searchTerm, String);
-    console.log(`Testing external MCP search for: ${searchTerm}`);
+    console.log(`Testing MCP SDK search for: ${searchTerm}`);
     
     try {
       await Messages.insertAsync({
-        text: `🔍 Testing external MCP search for: "${searchTerm}"`,
+        text: `🔍 Testing MCP SDK search for: "${searchTerm}"`,
         createdAt: new Date(),
         userId: "system-test",
-        owner: "MCP Test",
+        owner: "MCP SDK Test",
         type: "system-info",
       });
       
-      const result = await mcpExternalClient.callElasticsearchMcp('search_documents', {
+      const result = await mcpSdkClient.callElasticsearchMcp('search_documents', {
         index: DOC_PROCESSING_CONFIG.ELASTICSEARCH_INDEX,
         query_body: {
           query: {
@@ -472,10 +472,10 @@ The system uses external MCP servers for all database operations.`;
         const hits = result.hits;
         
         await Messages.insertAsync({
-          text: `✅ External MCP found ${hits.length} results for "${searchTerm}"`,
+          text: `✅ MCP SDK found ${hits.length} results for "${searchTerm}"`,
           createdAt: new Date(),
           userId: "system-elasticsearch",
-          owner: "Elasticsearch MCP",
+          owner: "Elasticsearch MCP SDK",
           type: "system-info",
         });
         
@@ -496,28 +496,28 @@ The system uses external MCP servers for all database operations.`;
             text: content,
             createdAt: new Date(),
             userId: "system-elasticsearch",
-            owner: "Elasticsearch MCP Server",
+            owner: "Elasticsearch MCP SDK Server",
             type: "mcp-response",
           });
         }
       } else {
         await Messages.insertAsync({
-          text: `ℹ️ No results found for "${searchTerm}" via external MCP server`,
+          text: `ℹ️ No results found for "${searchTerm}" via MCP SDK server`,
           createdAt: new Date(),
           userId: "system-elasticsearch",
-          owner: "Elasticsearch MCP",
+          owner: "Elasticsearch MCP SDK",
           type: "system-info",
         });
       }
       
       return { success: true, resultsFound: result?.hits?.length || 0 };
     } catch (error) {
-      console.error("Error testing external MCP search:", error);
+      console.error("Error testing MCP SDK search:", error);
       await Messages.insertAsync({
-        text: `❌ Error testing external MCP search: ${error.message}`,
+        text: `❌ Error testing MCP SDK search: ${error.message}`,
         createdAt: new Date(),
         userId: "system-error",
-        owner: "MCP Test",
+        owner: "MCP SDK Test",
         type: "error",
       });
       throw error;

@@ -1,17 +1,18 @@
 // mcp-servers/mongodb-server/server.js
-import express from 'express';
-import cors from 'cors';
+// Fixed MongoDB MCP Server with proper transport
+
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import {
+  CallToolRequestSchema,
+  ErrorCode,
+  ListToolsRequestSchema,
+  McpError,
+} from '@modelcontextprotocol/sdk/types.js';
 import { MongoClient } from 'mongodb';
 import dotenv from 'dotenv';
 
 dotenv.config();
-
-const app = express();
-const PORT = process.env.MONGODB_MCP_PORT || 3001;
-
-// Middleware
-app.use(cors());
-app.use(express.json({ limit: '50mb' }));
 
 // MongoDB connection
 let mongoClient = null;
@@ -23,7 +24,7 @@ const DB_NAME = process.env.DB_NAME || 'ozwell';
 // Initialize MongoDB connection
 async function initMongoDB() {
   try {
-    console.log('🔗 Connecting to MongoDB Atlas...');
+    console.error('🔗 Connecting to MongoDB Atlas...');
     mongoClient = new MongoClient(MONGO_URI, {
       retryWrites: true,
       w: 'majority',
@@ -38,7 +39,7 @@ async function initMongoDB() {
     
     // Test connection
     await db.admin().ping();
-    console.log(`✅ Connected to MongoDB Atlas database: ${DB_NAME}`);
+    console.error(`✅ Connected to MongoDB Atlas database: ${DB_NAME}`);
     
     return true;
   } catch (error) {
@@ -47,129 +48,77 @@ async function initMongoDB() {
   }
 }
 
-// MCP Protocol handler
-app.post('/mcp', async (req, res) => {
-  try {
-    const { jsonrpc, method, params, id } = req.body;
-
-    // Validate MCP request format
-    if (jsonrpc !== '2.0' || !method) {
-      return res.status(400).json({
-        jsonrpc: '2.0',
-        error: { code: -32600, message: 'Invalid Request' },
-        id: id || null
-      });
-    }
-
-    console.log(`📨 MCP Request: ${method}`, params);
-
-    let result;
-    
-    switch (method) {
-      case 'tools/list':
-        result = await listTools();
-        break;
-      
-      case 'tools/call':
-        result = await callTool(params);
-        break;
-        
-      case 'find_documents':
-        result = await findDocuments(params);
-        break;
-        
-      case 'insert_document':
-        result = await insertDocument(params);
-        break;
-        
-      case 'update_documents':
-        result = await updateDocuments(params);
-        break;
-        
-      case 'delete_documents':
-        result = await deleteDocuments(params);
-        break;
-        
-      case 'count_documents':
-        result = await countDocuments(params);
-        break;
-        
-      case 'list_collections':
-        result = await listCollections();
-        break;
-        
-      case 'create_index':
-        result = await createIndex(params);
-        break;
-        
-      case 'list_indexes':
-        result = await listIndexes(params);
-        break;
-        
-      case 'run_aggregation':
-        result = await runAggregation(params);
-        break;
-        
-      case 'get_collection_info':
-        result = await getCollectionInfo(params);
-        break;
-
-      default:
-        return res.status(404).json({
-          jsonrpc: '2.0',
-          error: { code: -32601, message: 'Method not found' },
-          id
-        });
-    }
-
-    res.json({
-      jsonrpc: '2.0',
-      result,
-      id
-    });
-
-  } catch (error) {
-    console.error('🚨 MCP Error:', error);
-    res.status(500).json({
-      jsonrpc: '2.0',
-      error: { 
-        code: -32603, 
-        message: 'Internal error',
-        data: error.message 
-      },
-      id: req.body.id || null
-    });
+// Create MCP Server instance
+const server = new Server(
+  {
+    name: 'mongodb-mcp-server',
+    version: '1.0.0',
+  },
+  {
+    capabilities: {
+      tools: {},
+    },
   }
-});
+);
 
-// MCP Tools Implementation
-async function listTools() {
+// List available tools
+server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
       {
         name: 'find_documents',
-        description: 'Query documents in a MongoDB collection',
+        description: 'Query documents in a MongoDB collection with flexible filtering, sorting, and pagination',
         inputSchema: {
           type: 'object',
           properties: {
-            collection: { type: 'string', description: 'Collection name' },
-            query: { type: 'object', description: 'MongoDB query object' },
-            projection: { type: 'object', description: 'Fields to include/exclude' },
-            sort: { type: 'object', description: 'Sort criteria' },
-            limit: { type: 'number', description: 'Maximum documents to return' },
-            skip: { type: 'number', description: 'Number of documents to skip' }
+            collection: { 
+              type: 'string', 
+              description: 'Name of the MongoDB collection to query' 
+            },
+            query: { 
+              type: 'object', 
+              description: 'MongoDB query object (e.g., {"name": "John"} or {} for all)',
+              default: {}
+            },
+            projection: { 
+              type: 'object', 
+              description: 'Fields to include/exclude (e.g., {"name": 1, "_id": 0})' 
+            },
+            sort: { 
+              type: 'object', 
+              description: 'Sort criteria (e.g., {"createdAt": -1})' 
+            },
+            limit: { 
+              type: 'number', 
+              description: 'Maximum number of documents to return',
+              default: 50
+            },
+            skip: { 
+              type: 'number', 
+              description: 'Number of documents to skip for pagination',
+              default: 0
+            }
           },
           required: ['collection']
         }
       },
       {
         name: 'insert_document',
-        description: 'Insert document(s) into a MongoDB collection',
+        description: 'Insert one or multiple documents into a MongoDB collection',
         inputSchema: {
           type: 'object',
           properties: {
-            collection: { type: 'string', description: 'Collection name' },
-            document: { type: ['object', 'array'], description: 'Document or array of documents to insert' }
+            collection: { 
+              type: 'string', 
+              description: 'Name of the MongoDB collection' 
+            },
+            document: { 
+              description: 'Document object or array of documents to insert',
+              oneOf: [
+                { type: 'object' },
+                { type: 'array', items: { type: 'object' } }
+              ]
+            }
           },
           required: ['collection', 'document']
         }
@@ -180,10 +129,27 @@ async function listTools() {
         inputSchema: {
           type: 'object',
           properties: {
-            collection: { type: 'string', description: 'Collection name' },
-            query: { type: 'object', description: 'Query to match documents' },
-            update: { type: 'object', description: 'Update operations' },
-            options: { type: 'object', description: 'Update options (upsert, multi, etc.)' }
+            collection: { 
+              type: 'string', 
+              description: 'Name of the MongoDB collection' 
+            },
+            query: { 
+              type: 'object', 
+              description: 'Query to match documents to update' 
+            },
+            update: { 
+              type: 'object', 
+              description: 'Update operations (e.g., {"$set": {"status": "updated"}})' 
+            },
+            options: { 
+              type: 'object', 
+              description: 'Update options like upsert, multi, etc.',
+              properties: {
+                upsert: { type: 'boolean', default: false },
+                multi: { type: 'boolean', default: false },
+                updateMany: { type: 'boolean', default: false }
+              }
+            }
           },
           required: ['collection', 'query', 'update']
         }
@@ -194,75 +160,158 @@ async function listTools() {
         inputSchema: {
           type: 'object',
           properties: {
-            collection: { type: 'string', description: 'Collection name' },
-            query: { type: 'object', description: 'Query to match documents to delete' },
-            options: { type: 'object', description: 'Delete options' }
+            collection: { 
+              type: 'string', 
+              description: 'Name of the MongoDB collection' 
+            },
+            query: { 
+              type: 'object', 
+              description: 'Query to match documents to delete' 
+            },
+            options: { 
+              type: 'object', 
+              description: 'Delete options',
+              properties: {
+                justOne: { type: 'boolean', default: false },
+                deleteOne: { type: 'boolean', default: false }
+              }
+            }
           },
           required: ['collection', 'query']
         }
       },
       {
         name: 'count_documents',
-        description: 'Count documents in a MongoDB collection',
+        description: 'Count documents in a MongoDB collection matching a query',
         inputSchema: {
           type: 'object',
           properties: {
-            collection: { type: 'string', description: 'Collection name' },
-            query: { type: 'object', description: 'Query to match documents' }
+            collection: { 
+              type: 'string', 
+              description: 'Name of the MongoDB collection' 
+            },
+            query: { 
+              type: 'object', 
+              description: 'Query to match documents for counting',
+              default: {}
+            }
           },
           required: ['collection']
         }
       },
       {
         name: 'list_collections',
-        description: 'List all collections in the database',
+        description: 'List all collections in the MongoDB database',
         inputSchema: {
           type: 'object',
-          properties: {}
+          properties: {},
+          additionalProperties: false
         }
       },
       {
         name: 'run_aggregation',
-        description: 'Run an aggregation pipeline on a collection',
+        description: 'Run an aggregation pipeline on a MongoDB collection',
         inputSchema: {
           type: 'object',
           properties: {
-            collection: { type: 'string', description: 'Collection name' },
-            pipeline: { type: 'array', description: 'Aggregation pipeline stages' }
+            collection: { 
+              type: 'string', 
+              description: 'Name of the MongoDB collection' 
+            },
+            pipeline: { 
+              type: 'array', 
+              description: 'Array of aggregation pipeline stages',
+              items: { type: 'object' }
+            }
           },
           required: ['collection', 'pipeline']
+        }
+      },
+      {
+        name: 'get_collection_info',
+        description: 'Get detailed information about a MongoDB collection including stats and indexes',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            collection: { 
+              type: 'string', 
+              description: 'Name of the MongoDB collection' 
+            }
+          },
+          required: ['collection']
         }
       }
     ]
   };
-}
+});
 
-async function callTool(params) {
-  const { name, arguments: args } = params;
+// Handle tool calls
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  const { name, arguments: args } = request.params;
   
-  switch (name) {
-    case 'find_documents':
-      return await findDocuments(args);
-    case 'insert_document':
-      return await insertDocument(args);
-    case 'update_documents':
-      return await updateDocuments(args);
-    case 'delete_documents':
-      return await deleteDocuments(args);
-    case 'count_documents':
-      return await countDocuments(args);
-    case 'list_collections':
-      return await listCollections();
-    case 'run_aggregation':
-      return await runAggregation(args);
-    default:
-      throw new Error(`Unknown tool: ${name}`);
+  try {
+    console.error(`📨 MCP Tool Call: ${name}`, JSON.stringify(args));
+    
+    let result;
+    
+    switch (name) {
+      case 'find_documents':
+        result = await findDocuments(args);
+        break;
+      case 'insert_document':
+        result = await insertDocument(args);
+        break;
+      case 'update_documents':
+        result = await updateDocuments(args);
+        break;
+      case 'delete_documents':
+        result = await deleteDocuments(args);
+        break;
+      case 'count_documents':
+        result = await countDocuments(args);
+        break;
+      case 'list_collections':
+        result = await listCollections();
+        break;
+      case 'run_aggregation':
+        result = await runAggregation(args);
+        break;
+      case 'get_collection_info':
+        result = await getCollectionInfo(args);
+        break;
+      default:
+        throw new McpError(
+          ErrorCode.MethodNotFound,
+          `Unknown tool: ${name}`
+        );
+    }
+    
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(result, null, 2)
+        }
+      ]
+    };
+    
+  } catch (error) {
+    console.error(`❌ Tool execution error (${name}):`, error);
+    
+    if (error instanceof McpError) {
+      throw error;
+    }
+    
+    throw new McpError(
+      ErrorCode.InternalError,
+      `Tool execution failed: ${error.message}`
+    );
   }
-}
+});
 
 // MongoDB Operations
 async function findDocuments(params) {
-  const { collection, query = {}, projection, sort, limit, skip } = params;
+  const { collection, query = {}, projection, sort, limit = 50, skip = 0 } = params;
   
   let cursor = db.collection(collection).find(query);
   
@@ -272,12 +321,13 @@ async function findDocuments(params) {
   if (limit) cursor = cursor.limit(limit);
   
   const documents = await cursor.toArray();
-  console.log(`📄 Found ${documents.length} documents in '${collection}'`);
+  console.error(`📄 Found ${documents.length} documents in '${collection}'`);
   
   return {
     success: true,
     collection,
     count: documents.length,
+    query: query,
     documents
   };
 }
@@ -287,19 +337,21 @@ async function insertDocument(params) {
   
   if (Array.isArray(document)) {
     const result = await db.collection(collection).insertMany(document);
-    console.log(`📄 Inserted ${result.insertedCount} documents into '${collection}'`);
+    console.error(`📄 Inserted ${result.insertedCount} documents into '${collection}'`);
     return {
       success: true,
       collection,
+      operation: 'insertMany',
       insertedCount: result.insertedCount,
       insertedIds: result.insertedIds
     };
   } else {
     const result = await db.collection(collection).insertOne(document);
-    console.log(`📄 Inserted 1 document into '${collection}'`);
+    console.error(`📄 Inserted 1 document into '${collection}'`);
     return {
       success: true,
       collection,
+      operation: 'insertOne',
       insertedCount: 1,
       insertedId: result.insertedId
     };
@@ -316,11 +368,12 @@ async function updateDocuments(params) {
     result = await db.collection(collection).updateOne(query, update, options);
   }
   
-  console.log(`📄 Updated ${result.modifiedCount} documents in '${collection}'`);
+  console.error(`📄 Updated ${result.modifiedCount} documents in '${collection}'`);
   
   return {
     success: true,
     collection,
+    operation: options.multi || options.updateMany ? 'updateMany' : 'updateOne',
     matchedCount: result.matchedCount,
     modifiedCount: result.modifiedCount,
     upsertedCount: result.upsertedCount,
@@ -338,11 +391,12 @@ async function deleteDocuments(params) {
     result = await db.collection(collection).deleteMany(query);
   }
   
-  console.log(`📄 Deleted ${result.deletedCount} documents from '${collection}'`);
+  console.error(`📄 Deleted ${result.deletedCount} documents from '${collection}'`);
   
   return {
     success: true,
     collection,
+    operation: options.justOne || options.deleteOne ? 'deleteOne' : 'deleteMany',
     deletedCount: result.deletedCount
   };
 }
@@ -351,11 +405,12 @@ async function countDocuments(params) {
   const { collection, query = {} } = params;
   
   const count = await db.collection(collection).countDocuments(query);
-  console.log(`📄 Counted ${count} documents in '${collection}'`);
+  console.error(`📄 Counted ${count} documents in '${collection}'`);
   
   return {
     success: true,
     collection,
+    query,
     count
   };
 }
@@ -364,12 +419,14 @@ async function listCollections() {
   const collections = await db.listCollections().toArray();
   const collectionNames = collections.map(col => col.name);
   
-  console.log(`📄 Found ${collectionNames.length} collections:`, collectionNames);
+  console.error(`📄 Found ${collectionNames.length} collections:`, collectionNames);
   
   return {
     success: true,
+    database: DB_NAME,
     collections: collectionNames,
-    count: collectionNames.length
+    count: collectionNames.length,
+    details: collections
   };
 }
 
@@ -377,96 +434,65 @@ async function runAggregation(params) {
   const { collection, pipeline } = params;
   
   const results = await db.collection(collection).aggregate(pipeline).toArray();
-  console.log(`📄 Aggregation on '${collection}' returned ${results.length} results`);
+  console.error(`📄 Aggregation on '${collection}' returned ${results.length} results`);
   
   return {
     success: true,
     collection,
+    pipeline,
     count: results.length,
     results
-  };
-}
-
-async function createIndex(params) {
-  const { collection, keys, options = {} } = params;
-  
-  const indexName = await db.collection(collection).createIndex(keys, options);
-  console.log(`📄 Created index '${indexName}' on '${collection}'`);
-  
-  return {
-    success: true,
-    collection,
-    indexName
-  };
-}
-
-async function listIndexes(params) {
-  const { collection } = params;
-  
-  const indexes = await db.collection(collection).listIndexes().toArray();
-  console.log(`📄 Found ${indexes.length} indexes on '${collection}'`);
-  
-  return {
-    success: true,
-    collection,
-    count: indexes.length,
-    indexes
   };
 }
 
 async function getCollectionInfo(params) {
   const { collection } = params;
   
-  const stats = await db.collection(collection).stats();
-  const indexes = await db.collection(collection).listIndexes().toArray();
-  
-  return {
-    success: true,
-    collection,
-    stats: {
-      count: stats.count,
-      size: stats.size,
-      avgObjSize: stats.avgObjSize,
-      storageSize: stats.storageSize,
-      nindexes: stats.nindexes
-    },
-    indexes: indexes.map(idx => ({
-      name: idx.name,
-      key: idx.key,
-      unique: !!idx.unique
-    }))
-  };
+  try {
+    const stats = await db.collection(collection).stats();
+    const indexes = await db.collection(collection).listIndexes().toArray();
+    
+    return {
+      success: true,
+      collection,
+      stats: {
+        count: stats.count,
+        size: stats.size,
+        avgObjSize: stats.avgObjSize,
+        storageSize: stats.storageSize,
+        nindexes: stats.nindexes,
+        totalIndexSize: stats.totalIndexSize
+      },
+      indexes: indexes.map(idx => ({
+        name: idx.name,
+        key: idx.key,
+        unique: !!idx.unique,
+        sparse: !!idx.sparse
+      }))
+    };
+  } catch (error) {
+    return {
+      success: false,
+      collection,
+      error: error.message
+    };
+  }
 }
 
-// Health check endpoint
-app.get('/health', async (req, res) => {
-  try {
-    await db.admin().ping();
-    res.json({ 
-      status: 'healthy', 
-      service: 'mongodb-mcp-server',
-      database: DB_NAME,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    res.status(500).json({ 
-      status: 'unhealthy', 
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
-  }
-});
-
-// Start server
+// Start the MCP server
 async function startServer() {
   try {
+    // Initialize MongoDB connection
     await initMongoDB();
     
-    app.listen(PORT, () => {
-      console.log(`🚀 MongoDB MCP Server running on port ${PORT}`);
-      console.log(`📋 Health check: http://localhost:${PORT}/health`);
-      console.log(`🔌 MCP endpoint: http://localhost:${PORT}/mcp`);
-    });
+    console.error('🚀 MongoDB MCP Server (Official SDK) started');
+    console.error('📋 Available tools: find_documents, insert_document, update_documents, delete_documents, count_documents, list_collections, run_aggregation, get_collection_info');
+    console.error('🔌 Listening on stdio for MCP protocol communication');
+    
+    // Create transport and connect
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    
   } catch (error) {
     console.error('❌ Failed to start MongoDB MCP Server:', error);
     process.exit(1);
@@ -475,11 +501,23 @@ async function startServer() {
 
 // Graceful shutdown
 process.on('SIGINT', async () => {
-  console.log('🛑 Shutting down MongoDB MCP Server...');
+  console.error('🛑 Shutting down MongoDB MCP Server...');
   if (mongoClient) {
     await mongoClient.close();
   }
   process.exit(0);
 });
 
-startServer();
+process.on('SIGTERM', async () => {
+  console.error('🛑 Shutting down MongoDB MCP Server...');
+  if (mongoClient) {
+    await mongoClient.close();
+  }
+  process.exit(0);
+});
+
+// Start the server
+startServer().catch((error) => {
+  console.error('Fatal error starting server:', error);
+  process.exit(1);
+});
