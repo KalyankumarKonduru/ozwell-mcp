@@ -522,5 +522,134 @@ The system uses MCP SDK servers for all database operations.`;
       });
       throw error;
     }
+  },
+  async "mcp.callFhirSdk"(toolName, params) {
+    check(toolName, String);
+    check(params, Object);
+
+    console.log(`📡 Calling FHIR MCP SDK server tool: ${toolName}`, params);
+    try {
+      const result = await mcpSdkClient.callFhirMcp(toolName, params);
+      
+      await Messages.insertAsync({
+        text: `FHIR MCP SDK Server (${toolName}) Result: ${JSON.stringify(result, null, 2)}`,
+        createdAt: new Date(), 
+        userId: "system-mcp", 
+        owner: "FHIR MCP SDK Server", 
+        type: "mcp-response"
+      });
+      
+      return result;
+    } catch (error) {
+      console.error(`❌ Error calling FHIR MCP SDK server (${toolName}):`, error);
+      
+      await Messages.insertAsync({
+        text: `❌ Error calling FHIR MCP SDK server (${toolName}): ${error.reason || error.message}`,
+        createdAt: new Date(), 
+        userId: "system-error", 
+        owner: "MCP SDK Client", 
+        type: "error"
+      });
+      
+      throw new Meteor.Error("mcp-fhir-sdk-error", `FHIR MCP SDK Server Error: ${error.message}`);
+    }
+  },
+
+  // Update the health check method:
+  async "mcp.checkSdkHealth"() {
+    const results = {
+      mongodb: await mcpSdkClient.checkMongoDbMcpHealth(),
+      elasticsearch: await mcpSdkClient.checkElasticsearchMcpHealth(),
+      fhir: await mcpSdkClient.checkFhirMcpHealth()
+    };
+
+    // Display health check results
+    await Messages.insertAsync({
+      text: `🏥 MCP SDK Server Health Check:\n` +
+            `MongoDB: ${results.mongodb.status}\n` +
+            `Elasticsearch: ${results.elasticsearch.status}\n` +
+            `FHIR EHR: ${results.fhir.status}`,
+      createdAt: new Date(),
+      userId: "system-health",
+      owner: "MCP SDK Health Check",
+      type: "system-info",
+    });
+
+    return results;
+  },
+
+  // Add a test method for FHIR searches:
+  async "mcp.testFhirSearch"(searchTerm) {
+    check(searchTerm, String);
+    console.log(`Testing FHIR MCP SDK search for: ${searchTerm}`);
+    
+    try {
+      await Messages.insertAsync({
+        text: `🔍 Testing FHIR MCP SDK search for patients named: "${searchTerm}"`,
+        createdAt: new Date(),
+        userId: "system-test",
+        owner: "FHIR MCP SDK Test",
+        type: "system-info",
+      });
+      
+      const result = await mcpSdkClient.callFhirMcp('search_patients', {
+        family: searchTerm,
+        _count: 5
+      });
+      
+      if (result && result.patients && result.patients.length > 0) {
+        const patients = result.patients;
+        
+        await Messages.insertAsync({
+          text: `✅ FHIR MCP SDK found ${patients.length} patients matching "${searchTerm}"`,
+          createdAt: new Date(),
+          userId: "system-fhir",
+          owner: "FHIR MCP SDK",
+          type: "system-info",
+        });
+        
+        // Display each patient (up to 3)
+        for (let i = 0; i < Math.min(patients.length, 3); i++) {
+          const patient = patients[i];
+          
+          let content = `👤 Patient ${i+1}:\n`;
+          content += `Name: ${patient.name}\n`;
+          content += `ID: ${patient.id}\n`;
+          if (patient.gender) content += `Gender: ${patient.gender}\n`;
+          if (patient.birthDate) content += `Birth Date: ${patient.birthDate}\n`;
+          if (patient.identifiers && patient.identifiers.length > 0) {
+            content += `Identifiers: ${patient.identifiers.map(id => `${id.type || 'Unknown'}: ${id.value}`).join(', ')}\n`;
+          }
+          
+          await Messages.insertAsync({
+            text: content,
+            createdAt: new Date(),
+            userId: "system-fhir",
+            owner: "FHIR MCP SDK Server",
+            type: "mcp-response",
+          });
+        }
+      } else {
+        await Messages.insertAsync({
+          text: `ℹ️ No patients found with family name "${searchTerm}" via FHIR MCP SDK server`,
+          createdAt: new Date(),
+          userId: "system-fhir",
+          owner: "FHIR MCP SDK",
+          type: "system-info",
+        });
+      }
+      
+      return { success: true, patientsFound: result?.patients?.length || 0 };
+    } catch (error) {
+      console.error("Error testing FHIR MCP SDK search:", error);
+      await Messages.insertAsync({
+        text: `❌ Error testing FHIR MCP SDK search: ${error.message}`,
+        createdAt: new Date(),
+        userId: "system-error",
+        owner: "FHIR MCP SDK Test",
+        type: "error",
+      });
+      throw error;
+    }
   }
 });

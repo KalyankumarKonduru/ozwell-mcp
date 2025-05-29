@@ -1,4 +1,4 @@
-// imports/mcp/client.js - Stable version with better process management
+// imports/mcp/client.js - Enhanced version based on your current stable code
 
 import { Meteor } from "meteor/meteor";
 import { HTTP } from "meteor/http";
@@ -33,14 +33,14 @@ function getProjectRoot() {
 let requestIdCounter = 0;
 
 export const mcpOzwellClient = {
-  async sendMessageToOzwell(userQuery) {
+  async sendMessageToOzwell(userQuery, context = {}) {
     if (!OZWELL_API_URL || !OZWELL_API_KEY) {
       console.error("Ozwell API URL or Key is not configured in settings.json");
       throw new Meteor.Error("config-error", "Ozwell LLM service is not configured.");
     }
     if (Meteor.isServer) {
       try {
-        console.log(`Sending query to Ozwell LLM: ${userQuery}`);
+        console.log(`Sending query to Ozwell LLM: ${userQuery.substring(0, 100)}...`);
         
         const apiEndpoint = `${OZWELL_API_URL}/v1/completion`;
         
@@ -65,9 +65,25 @@ export const mcpOzwellClient = {
     }
     return null; 
   },
+
+  // Health check method
+  async testConnection() {
+    try {
+      const response = await this.sendMessageToOzwell("Health check");
+      return { 
+        status: 'healthy', 
+        responseReceived: !!response
+      };
+    } catch (error) {
+      return { 
+        status: 'unhealthy', 
+        error: error.message 
+      };
+    }
+  }
 };
 
-// Improved MCP SDK Process Management
+// Enhanced MCP SDK Process Management
 class McpSdkClient {
   constructor(serverName, serverFileName) {
     this.serverName = serverName;
@@ -80,6 +96,10 @@ class McpSdkClient {
     this.maxConnectionAttempts = 3;
     this.reconnectDelay = 2000; // 2 seconds
     this.isShuttingDown = false;
+    this.lastError = null;
+    this.connectionTime = null;
+    this.requestCount = 0;
+    this.responseCount = 0;
   }
 
   getServerPath() {
@@ -91,11 +111,14 @@ class McpSdkClient {
 
   async connect() {
     if (this.isConnected || this.isConnecting || this.isShuttingDown) {
+      console.log(`⏭️ ${this.serverName} connection skipped (connected: ${this.isConnected}, connecting: ${this.isConnecting})`);
       return;
     }
 
     if (this.connectionAttempts >= this.maxConnectionAttempts) {
-      throw new Error(`${this.serverName} MCP server failed to connect after ${this.maxConnectionAttempts} attempts`);
+      const error = new Error(`${this.serverName} MCP server failed to connect after ${this.maxConnectionAttempts} attempts`);
+      this.lastError = error;
+      throw error;
     }
 
     this.isConnecting = true;
@@ -103,9 +126,19 @@ class McpSdkClient {
 
     return new Promise((resolve, reject) => {
       try {
-        console.log(`🚀 Starting ${this.serverName} MCP SDK server (attempt ${this.connectionAttempts})...`);
+        console.log(`🚀 Starting ${this.serverName} MCP SDK server (attempt ${this.connectionAttempts}/${this.maxConnectionAttempts})...`);
         
         const serverPath = this.getServerPath();
+        
+        // Check if server file exists
+        const fs = require('fs');
+        if (!fs.existsSync(serverPath)) {
+          const error = new Error(`${this.serverName} server file not found: ${serverPath}`);
+          this.lastError = error;
+          this.isConnecting = false;
+          reject(error);
+          return;
+        }
         
         this.process = spawn('node', [serverPath], {
           stdio: ['pipe', 'pipe', 'pipe'],
@@ -117,15 +150,20 @@ class McpSdkClient {
         // Set up process event handlers
         this.process.on('error', (error) => {
           console.error(`❌ ${this.serverName} MCP process error:`, error);
+          this.lastError = error;
           this.handleProcessExit();
-          reject(error);
+          if (this.isConnecting) {
+            this.isConnecting = false;
+            reject(error);
+          }
         });
 
         this.process.on('exit', (code, signal) => {
           console.log(`🛑 ${this.serverName} MCP process exited with code ${code}, signal ${signal}`);
           this.handleProcessExit();
-          if (!this.isConnected && this.isConnecting) {
-            reject(new Error(`Process exited during connection`));
+          if (this.isConnecting) {
+            this.isConnecting = false;
+            reject(new Error(`Process exited during connection (code: ${code})`));
           }
         });
 
@@ -145,18 +183,23 @@ class McpSdkClient {
               this.initializeServer().then(() => {
                 this.isConnecting = false;
                 this.connectionAttempts = 0; // Reset on successful connection
+                this.connectionTime = new Date();
+                console.log(`✅ ${this.serverName} MCP SDK server fully connected`);
                 resolve();
               }).catch((error) => {
                 this.isConnecting = false;
+                this.lastError = error;
                 reject(error);
               });
             }, 1000);
           }
           
           // Check for connection errors
-          if (message.includes('Failed to start') || message.includes('connection failed')) {
+          if (message.includes('Failed to start') || message.includes('connection failed') || message.includes('ECONNREFUSED')) {
             this.isConnecting = false;
-            reject(new Error(`${this.serverName} server failed to start`));
+            const error = new Error(`${this.serverName} server failed to start: ${message}`);
+            this.lastError = error;
+            reject(error);
           }
         });
 
@@ -184,12 +227,15 @@ class McpSdkClient {
         setTimeout(() => {
           if (this.isConnecting && !this.isConnected) {
             this.isConnecting = false;
-            reject(new Error(`${this.serverName} connection timeout`));
+            const error = new Error(`${this.serverName} connection timeout (10s)`);
+            this.lastError = error;
+            reject(error);
           }
         }, 10000); // 10 second timeout
 
       } catch (error) {
         this.isConnecting = false;
+        this.lastError = error;
         reject(error);
       }
     });
@@ -199,6 +245,7 @@ class McpSdkClient {
     this.isConnected = false;
     this.isConnecting = false;
     this.process = null;
+    this.connectionTime = null;
     
     // Clear any pending requests
     for (const [id, { reject }] of this.pendingRequests) {
@@ -209,27 +256,31 @@ class McpSdkClient {
 
   async initializeServer() {
     try {
-      await this.sendRequest('initialize', {
+      const result = await this.sendRequest('initialize', {
         protocolVersion: '2024-11-05',
         capabilities: { tools: {} },
         clientInfo: { name: 'ozwell-mcp-chat', version: '1.0.0' }
       });
       
       this.isConnected = true;
-      console.log(`✅ ${this.serverName} MCP SDK server connected and initialized`);
+      console.log(`✅ ${this.serverName} MCP SDK server initialized`);
     } catch (error) {
       console.error(`❌ Failed to initialize ${this.serverName} MCP server:`, error);
+      this.lastError = error;
       throw error;
     }
   }
 
   async sendRequest(method, params) {
     if (!this.isConnected) {
+      console.log(`🔄 ${this.serverName} not connected, attempting connection...`);
       await this.connect();
     }
 
     if (!this.process) {
-      throw new Error(`${this.serverName} process not available`);
+      const error = new Error(`${this.serverName} process not available`);
+      this.lastError = error;
+      throw error;
     }
 
     return new Promise((resolve, reject) => {
@@ -241,13 +292,16 @@ class McpSdkClient {
         params
       };
 
-      this.pendingRequests.set(id, { resolve, reject });
+      this.pendingRequests.set(id, { resolve, reject, timestamp: Date.now() });
+      this.requestCount++;
 
       try {
         const requestLine = JSON.stringify(request) + '\n';
         this.process.stdin.write(requestLine);
+        console.log(`📤 ${this.serverName} request sent: ${method} (ID: ${id})`);
       } catch (error) {
         this.pendingRequests.delete(id);
+        this.lastError = error;
         reject(error);
         return;
       }
@@ -256,7 +310,9 @@ class McpSdkClient {
       setTimeout(() => {
         if (this.pendingRequests.has(id)) {
           this.pendingRequests.delete(id);
-          reject(new Error(`${this.serverName} MCP request timeout`));
+          const error = new Error(`${this.serverName} MCP request timeout (15s): ${method}`);
+          this.lastError = error;
+          reject(error);
         }
       }, 15000); // 15 second timeout
     });
@@ -264,11 +320,17 @@ class McpSdkClient {
 
   handleResponse(response) {
     if (response.id && this.pendingRequests.has(response.id)) {
-      const { resolve, reject } = this.pendingRequests.get(response.id);
+      const { resolve, reject, timestamp } = this.pendingRequests.get(response.id);
       this.pendingRequests.delete(response.id);
+      this.responseCount++;
+
+      const duration = Date.now() - timestamp;
+      console.log(`📥 ${this.serverName} response received (ID: ${response.id}, ${duration}ms)`);
 
       if (response.error) {
-        reject(new Error(response.error.message || 'MCP error'));
+        const error = new Error(response.error.message || 'MCP error');
+        this.lastError = error;
+        reject(error);
       } else {
         resolve(response.result);
       }
@@ -280,10 +342,27 @@ class McpSdkClient {
   }
 
   async callTool(name, args) {
+    console.log(`🔧 ${this.serverName} calling tool: ${name}`);
     return this.sendRequest('tools/call', { name, arguments: args });
   }
 
+  getStatus() {
+    return {
+      serverName: this.serverName,
+      isConnected: this.isConnected,
+      isConnecting: this.isConnecting,
+      connectionAttempts: this.connectionAttempts,
+      connectionTime: this.connectionTime,
+      requestCount: this.requestCount,
+      responseCount: this.responseCount,
+      pendingRequests: this.pendingRequests.size,
+      lastError: this.lastError?.message,
+      processRunning: !!this.process && !this.process.killed
+    };
+  }
+
   async disconnect() {
+    console.log(`🛑 Disconnecting ${this.serverName} MCP server...`);
     this.isShuttingDown = true;
     
     if (this.process) {
@@ -294,11 +373,13 @@ class McpSdkClient {
         // Give it a moment to close gracefully
         setTimeout(() => {
           if (this.process && !this.process.killed) {
+            console.log(`🔫 Terminating ${this.serverName} process...`);
             this.process.kill('SIGTERM');
             
             // Force kill if it doesn't close
             setTimeout(() => {
               if (this.process && !this.process.killed) {
+                console.log(`💀 Force killing ${this.serverName} process...`);
                 this.process.kill('SIGKILL');
               }
             }, 2000);
@@ -319,6 +400,7 @@ class McpSdkClient {
 // Create MCP SDK clients
 const mongoMcpClient = new McpSdkClient('MongoDB', 'mongodb-server');
 const elasticsearchMcpClient = new McpSdkClient('Elasticsearch', 'elasticsearch-server');
+const fhirMcpClient = new McpSdkClient('FHIR', 'fhir-server');
 
 export const mcpSdkClient = {
   async callMongoDbMcp(toolName, params) {
@@ -363,20 +445,81 @@ export const mcpSdkClient = {
 
   async checkMongoDbMcpHealth() {
     try {
-      await mongoMcpClient.listTools();
-      return { status: 'healthy', service: 'mongodb-mcp-sdk' };
+      const tools = await mongoMcpClient.listTools();
+      const status = mongoMcpClient.getStatus();
+      return { 
+        status: 'healthy', 
+        service: 'mongodb-mcp-sdk',
+        toolsAvailable: tools?.tools?.length || 0,
+        ...status
+      };
     } catch (error) {
       console.error("MongoDB MCP SDK health check failed:", error);
-      return { status: 'unhealthy', error: error.message };
+      const status = mongoMcpClient.getStatus();
+      return { 
+        status: 'unhealthy', 
+        error: error.message,
+        ...status
+      };
     }
   },
 
   async checkElasticsearchMcpHealth() {
     try {
-      await elasticsearchMcpClient.listTools();
-      return { status: 'healthy', service: 'elasticsearch-mcp-sdk' };
+      const tools = await elasticsearchMcpClient.listTools();
+      const status = elasticsearchMcpClient.getStatus();
+      return { 
+        status: 'healthy', 
+        service: 'elasticsearch-mcp-sdk',
+        toolsAvailable: tools?.tools?.length || 0,
+        ...status
+      };
     } catch (error) {
       console.error("Elasticsearch MCP SDK health check failed:", error);
+      const status = elasticsearchMcpClient.getStatus();
+      return { 
+        status: 'unhealthy', 
+        error: error.message,
+        ...status
+      };
+    }
+  },
+
+  getSystemStatus() {
+    return {
+      timestamp: new Date(),
+      mongodb: mongoMcpClient.getStatus(),
+      elasticsearch: elasticsearchMcpClient.getStatus(),
+      projectRoot: getProjectRoot()
+    };
+  },
+
+  async callFhirMcp(toolName, params) {
+    try {
+      console.log(`📡 Calling FHIR MCP SDK tool: ${toolName}`, params);
+      const result = await fhirMcpClient.callTool(toolName, params);
+      
+      if (result && result.content && result.content[0] && result.content[0].text) {
+        try {
+          return JSON.parse(result.content[0].text);
+        } catch (e) {
+          return result.content[0].text;
+        }
+      }
+      
+      return result;
+    } catch (error) {
+      console.error(`❌ FHIR MCP SDK error (${toolName}):`, error);
+      throw new Meteor.Error("mcp-fhir-sdk-error", `FHIR MCP SDK Error: ${error.message}`);
+    }
+  },
+
+  async checkFhirMcpHealth() {
+    try {
+      await fhirMcpClient.listTools();
+      return { status: 'healthy', service: 'fhir-mcp-sdk' };
+    } catch (error) {
+      console.error("FHIR MCP SDK health check failed:", error);
       return { status: 'unhealthy', error: error.message };
     }
   },
@@ -392,6 +535,9 @@ export const mcpSdkClient = {
       console.log('🔄 Initializing Elasticsearch MCP SDK server...');
       await elasticsearchMcpClient.connect();
       
+      console.log('🔄 Initializing FHIR MCP SDK server...');
+      await fhirMcpClient.connect();
+      
       console.log('✅ All MCP SDK servers initialized');
     } catch (error) {
       console.error('❌ Failed to initialize MCP SDK servers:', error);
@@ -404,17 +550,20 @@ export const mcpSdkClient = {
     
     await Promise.all([
       mongoMcpClient.disconnect(),
-      elasticsearchMcpClient.disconnect()
+      elasticsearchMcpClient.disconnect(),
+      fhirMcpClient.disconnect()
     ]);
     
     console.log('✅ All MCP SDK servers disconnected');
   }
 };
 
-// Rest of the file remains the same as before...
+// Note: createToolAwareSystemPrompt() removed as discussed
+// If Ozwell AI returns structured responses with intent/action/parameters,
+// we don't need to instruct it via system prompts
 export function createToolAwareSystemPrompt() {
   return `
-You have access to database tools via MCP SDK servers for both Elasticsearch and MongoDB. 
+You have access to database tools via MCP SDK servers for Elasticsearch, MongoDB, and FHIR EHR systems. 
 If the user's request requires retrieving, searching, or manipulating data, you MUST include tool execution instructions in your response.
 
 When you determine a database tool should be used, ALWAYS format your response EXACTLY like this:
@@ -423,28 +572,31 @@ When you determine a database tool should be used, ALWAYS format your response E
 
 \`\`\`json
 {
-  "target": "elasticsearch",
-  "tool": "search_documents",
+  "target": "fhir",
+  "tool": "search_patients",
   "params": {
-    "index": "ozwell_documents",
-    "query_body": {
-      "query": {
-        "match": {
-          "text_content": "search term"
-        }
-      }
-    }
+    "family": "Smith",
+    "given": "John"
   }
 }
 \`\`\`
 
-Available Elasticsearch tools: search_documents, vector_search_documents, index_document, get_document, update_document, delete_document
-Available MongoDB tools: find_documents, insert_document, update_documents, delete_documents, count_documents, list_collections
+Available systems and tools:
+- **Elasticsearch**: search_documents, vector_search_documents, index_document, get_document, update_document, delete_document
+- **MongoDB**: find_documents, insert_document, update_documents, delete_documents, count_documents, list_collections
+- **FHIR EHR**: search_patients, get_patient, get_patient_observations, get_patient_conditions, get_patient_medications, get_patient_encounters, search_observations, get_fhir_capability, fhir_search, create_patient
+
+Use FHIR tools for:
+- Patient searches and demographic information
+- Medical records, conditions, diagnoses
+- Medications and prescriptions
+- Lab results and vital signs
+- Clinical encounters and visits
+- Healthcare provider information
 
 The system will automatically execute your tool instructions via MCP SDK servers.
 `;
 }
-
 export function cleanResponseText(responseText) {
   if (!responseText || typeof responseText !== 'string') {
     return responseText;
@@ -476,6 +628,7 @@ function processResponse(data) {
                   data.choices?.[0]?.message?.content ||
                   data.choices?.[0]?.text ||
                   data.response ||
+                  data.completion ||
                   JSON.stringify(data);
   }
   
@@ -535,10 +688,49 @@ export async function executeToolsFromResponse(ozwellResponse) {
       throw new Error(`Unknown target system: ${target}`);
     }
     
-    // Display results in chat
+    // Enhanced result display with better formatting
     if (result) {
+      let displayText;
+      if (typeof result === 'object') {
+        // Format results based on operation type
+        if (result.success && result.documents) {
+          // MongoDB find results
+          displayText = `📄 Found ${result.documents.length} documents in collection '${result.collection}'`;
+          if (result.documents.length > 0) {
+            displayText += `\n\nFirst few results:\n`;
+            result.documents.slice(0, 3).forEach((doc, index) => {
+              displayText += `\n${index + 1}. ${doc.title || doc.original_filename || doc._id}`;
+              if (doc.uploaded_at) displayText += ` (${new Date(doc.uploaded_at).toLocaleDateString()})`;
+            });
+          }
+        } else if (result.success && result.hits) {
+          // Elasticsearch search results
+          displayText = `🔍 Found ${result.total || result.hits.length} matching documents`;
+          if (result.hits.length > 0) {
+            displayText += `\n\nTop results:\n`;
+            result.hits.slice(0, 3).forEach((hit, index) => {
+              const source = hit._source || hit.source || {};
+              displayText += `\n${index + 1}. ${source.title || 'Untitled Document'}`;
+              if (source.uploaded_at) displayText += ` (${new Date(source.uploaded_at).toLocaleDateString()})`;
+              if (hit._score) displayText += ` - Relevance: ${hit._score.toFixed(2)}`;
+            });
+          }
+        } else if (result.collections) {
+          // List collections result
+          displayText = `📂 Available collections (${result.collections.length}):\n${result.collections.join(', ')}`;
+        } else if (result.count !== undefined) {
+          // Count operation result
+          displayText = `📊 Count result: ${result.count} documents`;
+        } else {
+          // Fallback to JSON display
+          displayText = JSON.stringify(result, null, 2);
+        }
+      } else {
+        displayText = String(result);
+      }
+      
       await Messages.insertAsync({
-        text: typeof result === 'object' ? JSON.stringify(result, null, 2) : String(result),
+        text: displayText,
         createdAt: new Date(),
         userId: `system-${target}`,
         owner: `${target.charAt(0).toUpperCase() + target.slice(1)} MCP SDK Server`,
@@ -600,19 +792,38 @@ if (Meteor.isServer) {
     }
   });
 
-  // Enhanced cleanup
+  // Enhanced cleanup with better process management
   const cleanup = async () => {
     if (initialized) {
-      await mcpSdkClient.cleanup();
+      console.log('🛑 Application shutting down, cleaning up MCP SDK servers...');
+      try {
+        await mcpSdkClient.cleanup();
+        console.log('✅ MCP SDK servers cleanup completed');
+      } catch (error) {
+        console.error('❌ Error during MCP SDK cleanup:', error);
+      }
     }
   };
 
+  // Handle various shutdown signals
   process.on('SIGINT', cleanup);
   process.on('SIGTERM', cleanup);
   process.on('SIGHUP', cleanup);
+  process.on('SIGUSR2', cleanup); // For nodemon
+  
+  // Handle uncaught exceptions
+  process.on('uncaughtException', (error) => {
+    console.error('❌ Uncaught Exception:', error);
+    cleanup().then(() => process.exit(1));
+  });
+
+  process.on('unhandledRejection', (reason, promise) => {
+    console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+    cleanup().then(() => process.exit(1));
+  });
   
   // Handle process exit
-  process.on('exit', () => {
-    console.log('🛑 Process exiting, MCP servers should be cleaned up');
+  process.on('exit', (code) => {
+    console.log(`🛑 Process exiting with code ${code}, MCP servers should be cleaned up`);
   });
 }
