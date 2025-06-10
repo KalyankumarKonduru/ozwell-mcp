@@ -1,5 +1,3 @@
-// imports/mcp/pdf-utilities.js
-
 import { Meteor } from 'meteor/meteor';
 import { Buffer } from 'buffer';
 

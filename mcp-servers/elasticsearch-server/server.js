@@ -1,6 +1,3 @@
-// mcp-servers/elasticsearch-server/server.js
-// Fixed Elasticsearch MCP Server with proper transport
-
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
@@ -16,8 +13,8 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 // Elasticsearch connection configuration
-const ES_NODE = process.env.ES_NODE || 'https://0267cb4829484875ab688566f046c21a.us-central1.gcp.cloud.es.io:443';
-const ES_API_KEY = process.env.ES_API_KEY || 'aXd3NzlKWUJWc2YwU1VOQmFfemM6NVI4NDZTZVQtOTd2WXV1ZDBudGVWUQ==';
+const ES_NODE = process.env.ES_NODE || 'https://0256db538dba4d808e1fd7e28b9ccd9f.us-central1.gcp.cloud.es.io:443';
+const ES_API_KEY = process.env.ES_API_KEY || 'djUzTVZaY0Jmd0IteGM0a194a2w6UEFsWXhXSlpiTFpjeEI0eEVWVmVoZw==';
 
 // Global Elasticsearch client
 let esClient = null;
@@ -28,38 +25,32 @@ let esClient = null;
 async function initElasticsearch() {
   try {
     console.error('🔗 Connecting to Elasticsearch Cloud...');
-    
     esClient = new Client({
       node: ES_NODE,
       auth: { apiKey: ES_API_KEY },
       tls: { rejectUnauthorized: true },
-      requestTimeout: 30000,
-      pingTimeout: 3000,
-      maxRetries: 3,
-      sniffOnStart: false,
-      sniffOnConnectionFault: false
+      requestTimeout: 60000,
+      pingTimeout: 5000,
+      maxRetries: 5
     });
-    
-    // Test connection
+    await esClient.ping();
+    console.error('✅ Elasticsearch ping successful');
     const health = await esClient.cluster.health();
     const info = await esClient.info();
-    
     console.error(`✅ Connected to Elasticsearch Cloud`);
     console.error(`   Cluster: ${info.cluster_name}`);
     console.error(`   Version: ${info.version.number}`);
     console.error(`   Status: ${health.status}`);
     console.error(`   Nodes: ${health.number_of_nodes}`);
-    
     return true;
   } catch (error) {
-    console.error('❌ Elasticsearch connection failed:', error.message);
+    console.error('❌ Elasticsearch connection failed:', JSON.stringify(error, null, 2));
     throw new McpError(
       ErrorCode.InternalError,
       `Failed to connect to Elasticsearch: ${error.message}`
     );
   }
 }
-
 /**
  * Create MCP Server instance
  */

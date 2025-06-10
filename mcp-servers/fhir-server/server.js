@@ -1,6 +1,3 @@
-// mcp-servers/fhir-server/server.js
-// Complete FHIR R4 EHR MCP Server (Simplified for Public Servers)
-
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {

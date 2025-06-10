@@ -1,20 +1,12 @@
-// imports/api/methods.js - Updated for MCP SDK
-
 import { Meteor } from "meteor/meteor";
 import { check } from "meteor/check";
 import { Messages } from "./messages.js";
-import { mcpOzwellClient, createToolAwareSystemPrompt, executeToolsFromResponse, cleanResponseText, mcpSdkClient } from "../mcp/client.js"; 
+import { mcpOzwellClient, mcpSdkClient } from "../mcp/client.js"; 
 import { extractTextFromFile, chunkText, generateEmbeddingsForChunks, extractStructuredData } from "../mcp/document-processor.js";
 
-// Document processing config
 const DOC_PROCESSING_CONFIG = {
   ELASTICSEARCH_INDEX: Meteor.settings.private?.RAG_ELASTICSEARCH_INDEX || "ozwell_documents",
   ELASTICSEARCH_INDEX_CHUNKS: Meteor.settings.private?.RAG_ELASTICSEARCH_INDEX_CHUNKS || "ozwell_document_chunks",
-  ELASTICSEARCH_SEARCH_FIELDS: Meteor.settings.private?.RAG_ELASTICSEARCH_SEARCH_FIELDS || ["title", "text_content", "summary"],
-  ELASTICSEARCH_SOURCE_FIELDS: Meteor.settings.private?.RAG_ELASTICSEARCH_SOURCE_FIELDS || ["title", "text_content"],
-  MAX_SNIPPETS: Meteor.settings.private?.RAG_MAX_SNIPPETS || 3,
-  VECTOR_FIELD: Meteor.settings.private?.RAG_VECTOR_FIELD || "embedding_vector",
-  USE_VECTOR_SEARCH: Meteor.settings.private?.RAG_USE_VECTOR_SEARCH || false,
   CHUNK_SIZE: Meteor.settings.private?.RAG_CHUNK_SIZE || 1000,
   CHUNK_OVERLAP: Meteor.settings.private?.RAG_CHUNK_OVERLAP || 200,
   MAX_CHUNKS: Meteor.settings.private?.RAG_MAX_CHUNKS || 50,
@@ -34,7 +26,6 @@ Meteor.methods({
 
     const userName = this.userId ? (Meteor.users.findOne(this.userId)?.username || "User") : "Anonymous";
 
-    // First, insert the user's message
     await Messages.insertAsync({
       text,
       createdAt: new Date(),
@@ -42,7 +33,6 @@ Meteor.methods({
       type: "user",
     });
 
-    // If a file was uploaded, process it
     if (fileUploadInfo) {
       const documentId = new Mongo.ObjectID()._str;
       
@@ -57,18 +47,7 @@ Meteor.methods({
       this.unblock(); 
       
       try {
-        // Step 1: Convert base64 to buffer
         const fileBuffer = Buffer.from(fileUploadInfo.data, 'base64');
-        
-        // Step 2: Extract text from the document
-        await Messages.insertAsync({
-          text: `🔍 Extracting text from "${fileUploadInfo.name}"...`,
-          createdAt: new Date(),
-          userId: "system-process",
-          owner: "Document Processor",
-          type: "processing",
-        });
-        
         const extractionResult = await extractTextFromFile(fileBuffer, fileUploadInfo.name, fileUploadInfo.type);
         
         if (!extractionResult.success) {
@@ -82,7 +61,6 @@ Meteor.methods({
           return;
         }
         
-        // Step 3: Create document record for MongoDB
         const documentRecord = {
           _id: documentId,
           title: fileUploadInfo.name,
@@ -97,27 +75,9 @@ Meteor.methods({
           processed: false,
         };
         
-        // Step 4: Insert into MongoDB via MCP SDK server
-        await Messages.insertAsync({
-          text: `💾 Storing document metadata in MongoDB Atlas via MCP SDK server...`,
-          createdAt: new Date(),
-          userId: "system-process",
-          owner: "Document Processor",
-          type: "processing",
-        });
-        
         await Meteor.callAsync('mcp.callMongoSdk', 'insert_document', {
           collection: 'documents',
           document: documentRecord
-        });
-        
-        // Step 5: Chunk the document for better processing
-        await Messages.insertAsync({
-          text: `✂️ Analyzing document content and chunking for improved searchability...`,
-          createdAt: new Date(),
-          userId: "system-process",
-          owner: "Document Processor",
-          type: "processing",
         });
         
         const textChunks = chunkText(
@@ -127,18 +87,8 @@ Meteor.methods({
           DOC_PROCESSING_CONFIG.MAX_CHUNKS
         );
         
-        // Step 6: Generate embeddings for the chunks
-        await Messages.insertAsync({
-          text: `🧠 Generating vector embeddings for semantic search capabilities...`,
-          createdAt: new Date(),
-          userId: "system-process",
-          owner: "Document Processor",
-          type: "processing",
-        });
-        
         const chunksWithEmbeddings = await generateEmbeddingsForChunks(textChunks);
         
-        // Step 7: Save chunks to MongoDB via MCP SDK server
         const chunkRecords = chunksWithEmbeddings.map(chunk => ({
           document_id: documentId,
           chunk_index: chunk.index,
@@ -148,7 +98,6 @@ Meteor.methods({
           created_at: new Date()
         }));
         
-        // Insert all chunks via MCP SDK server
         if (chunkRecords.length > 0) {
           await Meteor.callAsync('mcp.callMongoSdk', 'insert_document', {
             collection: 'document_chunks',
@@ -156,27 +105,8 @@ Meteor.methods({
           });
         }
         
-        // Step 8: Extract structured data
-        await Messages.insertAsync({
-          text: `🔬 Analyzing document content for structured information...`,
-          createdAt: new Date(),
-          userId: "system-process",
-          owner: "Document Processor",
-          type: "processing",
-        });
-        
         const structuredData = await extractStructuredData(extractionResult.text, text);
         
-        // Step 9: Index document in Elasticsearch via MCP SDK server
-        await Messages.insertAsync({
-          text: `🔗 Indexing document in Elasticsearch Cloud via MCP SDK server...`,
-          createdAt: new Date(),
-          userId: "system-process",
-          owner: "Document Processor",
-          type: "processing",
-        });
-        
-        // Create Elasticsearch document
         const esDocument = {
           title: fileUploadInfo.name,
           text_content: extractionResult.text,
@@ -195,18 +125,15 @@ Meteor.methods({
           chunk_count: chunkRecords.length,
         };
         
-        // Get the first chunk's embedding for the main document embedding
         if (chunksWithEmbeddings.length > 0 && chunksWithEmbeddings[0].embedding) {
           esDocument.embedding_vector = chunksWithEmbeddings[0].embedding;
         }
         
-        // Index in Elasticsearch via MCP SDK server
         await Meteor.callAsync('mcp.callElasticsearchSdk', 'index_document', {
           index: DOC_PROCESSING_CONFIG.ELASTICSEARCH_INDEX,
           document_body: esDocument
         });
         
-        // Step 10: Index chunks in Elasticsearch via MCP SDK server
         for (const chunk of chunksWithEmbeddings) {
           if (chunk.embedding) {
             const chunkDoc = {
@@ -227,7 +154,6 @@ Meteor.methods({
           }
         }
         
-        // Step 11: Update MongoDB document record to mark as processed
         await Meteor.callAsync('mcp.callMongoSdk', 'update_documents', {
           collection: 'documents',
           query: { _id: documentId },
@@ -242,59 +168,48 @@ Meteor.methods({
           }
         });
         
-        // Step 12: Final success message
         await Messages.insertAsync({
-          text: `✅ Document "${fileUploadInfo.name}" successfully processed via MCP SDK servers! ` +
-                `Extracted ${extractionResult.text.length} characters of text and created ${chunkRecords.length} searchable chunks. ` +
-                `Document type detected: ${(structuredData.detection.documentType || ["unknown"]).join(", ")}.`,
+          text: `✅ Document "${fileUploadInfo.name}" successfully processed! ` +
+                `Extracted ${extractionResult.text.length} characters and created ${chunkRecords.length} searchable chunks.`,
           createdAt: new Date(),
           userId: "system-process",
           owner: "Document Processor",
           type: "system-info",
         });
         
-        // Ask Ozwell to analyze the document if we have contextual information
         if (text && text.trim().length > 0) {
-          const ozwellPrompt = `The user has uploaded a document "${fileUploadInfo.name}" and provided this context: "${text}". 
-          
-Document details: 
-- Content length: ${extractionResult.text.length} characters
-- Document type: ${(structuredData.detection.documentType || ["unknown"]).join(", ")}
-${structuredData.extractedFields && Object.keys(structuredData.extractedFields).length > 0 
-  ? `- Extracted fields: ${JSON.stringify(structuredData.extractedFields, null, 2)}` 
-  : ''}
-
-Based on this information, please:
-1. Confirm the document has been successfully processed and stored
-2. Explain what the user can do with this document now (e.g., search for information in it)
-3. Offer suggestions based on the document type (${(structuredData.detection.documentType || ["unknown"]).join(", ")})
-
-The system uses MCP SDK servers for all database operations.`;
+          const ozwellPrompt = `Document "${fileUploadInfo.name}" has been processed and stored. ` +
+                               `Content length: ${extractionResult.text.length} characters. ` +
+                               `User context: "${text}". Please provide helpful information about what the user can do with this document.`;
           
           try {
-            // Add system prompt for tool awareness
-            const enhancedPrompt = `${ozwellPrompt}\n\n${createToolAwareSystemPrompt()}`;
+            const availableTools = await mcpSdkClient.getAvailableToolsForOzwell();
+            const ozwellResponse = await mcpOzwellClient.sendMessageToOzwell(ozwellPrompt, availableTools);
             
-            const ozwellResponse = await mcpOzwellClient.sendMessageToOzwell(enhancedPrompt);
+            if (ozwellResponse.tool_calls && ozwellResponse.tool_calls.length > 0) {
+              for (const toolCall of ozwellResponse.tool_calls) {
+                const toolResult = await mcpSdkClient.executeToolCall(toolCall);
+                
+                await Messages.insertAsync({
+                  text: `Tool Result: ${toolResult.content}`,
+                  createdAt: new Date(),
+                  userId: "system-mcp",
+                  owner: "MCP Tool Result",
+                  type: "mcp-response",
+                });
+              }
+            }
+            
             const aiText = ozwellResponse.answer || ozwellResponse.responseText || "Document processing complete.";
-            
-            // Clean the response text to remove any JSON code blocks
-            const cleanedText = cleanResponseText(aiText);
-            
-            // Display Ozwell's response to the user
             await Messages.insertAsync({
-              text: cleanedText,
+              text: aiText,
               createdAt: new Date(),
               userId: "ozwell-ai",
               owner: "Ozwell AI",
               type: "ai",
             });
             
-            // Execute tools based on Ozwell's response using MCP SDK servers
-            console.log("Attempting to execute tools from Ozwell response via MCP SDK servers");
-            await executeToolsFromResponse(ozwellResponse);
           } catch (error) {
-            console.error("Error communicating with AI or executing MCP SDK tools:", error);
             await Messages.insertAsync({
               text: `❌ Error: ${error.message}`,
               createdAt: new Date(),
@@ -306,7 +221,6 @@ The system uses MCP SDK servers for all database operations.`;
         }
         
       } catch (error) {
-        console.error("Document processing error:", error);
         await Messages.insertAsync({
           text: `❌ Error processing document "${fileUploadInfo.name}": ${error.message}`,
           createdAt: new Date(),
@@ -319,35 +233,95 @@ The system uses MCP SDK servers for all database operations.`;
       return;
     }
 
-    // Handle regular text messages (without file upload)
+    // Handle regular text messages
     try {
-      // Enhance the prompt with tool instructions for MCP SDK servers
-      const enhancedPrompt = `${text}\n\n${createToolAwareSystemPrompt()}`;
+      const availableTools = await mcpSdkClient.getAvailableToolsForOzwell();
+      const ozwellResponse = await mcpOzwellClient.sendMessageToOzwell(text, availableTools);
       
-      // Send enhanced prompt to Ozwell
-      const ozwellResponse = await mcpOzwellClient.sendMessageToOzwell(enhancedPrompt);
+      if (ozwellResponse.tool_calls && ozwellResponse.tool_calls.length > 0) {
+        for (const toolCall of ozwellResponse.tool_calls) {
+          await Messages.insertAsync({
+            text: `🔧 Ozwell called tool: ${toolCall.function.name}`,
+            createdAt: new Date(),
+            userId: "system-auto",
+            owner: "Ozwell Tool Call",
+            type: "system-info",
+          });
+          
+          try {
+            const toolResult = await mcpSdkClient.executeToolCall(toolCall);
+            
+            let displayText;
+            try {
+              const resultObj = JSON.parse(toolResult.content);
+              if (resultObj.success && resultObj.patients) {
+                displayText = `👥 Found ${resultObj.patients.length} patients`;
+                if (resultObj.patients.length > 0) {
+                  displayText += `:\n`;
+                  resultObj.patients.slice(0, 3).forEach((patient, index) => {
+                    displayText += `\n${index + 1}. ${patient.name} (ID: ${patient.id})`;
+                    if (patient.gender) displayText += ` - ${patient.gender}`;
+                    if (patient.birthDate) displayText += ` - Born: ${patient.birthDate}`;
+                  });
+                }
+              } else if (resultObj.success && resultObj.hits) {
+                displayText = `🔍 Found ${resultObj.total || resultObj.hits.length} documents`;
+                if (resultObj.hits.length > 0) {
+                  displayText += `:\n`;
+                  resultObj.hits.slice(0, 3).forEach((hit, index) => {
+                    const source = hit._source || hit.source || {};
+                    displayText += `\n${index + 1}. ${source.title || 'Untitled'}`;
+                    if (hit._score) displayText += ` (relevance: ${hit._score.toFixed(2)})`;
+                  });
+                }
+              } else if (resultObj.success && resultObj.documents) {
+                displayText = `📄 Found ${resultObj.documents.length} documents in collection '${resultObj.collection}'`;
+                if (resultObj.documents.length > 0) {
+                  displayText += `:\n`;
+                  resultObj.documents.slice(0, 3).forEach((doc, index) => {
+                    displayText += `\n${index + 1}. ${doc.title || doc.original_filename || doc._id}`;
+                    if (doc.uploaded_at) displayText += ` (${new Date(doc.uploaded_at).toLocaleDateString()})`;
+                  });
+                }
+              } else {
+                displayText = toolResult.content;
+              }
+            } catch (e) {
+              displayText = toolResult.content;
+            }
+            
+            await Messages.insertAsync({
+              text: displayText,
+              createdAt: new Date(),
+              userId: "system-mcp",
+              owner: "MCP Tool Result",
+              type: "mcp-response",
+            });
+          } catch (toolError) {
+            await Messages.insertAsync({
+              text: `❌ Tool execution error: ${toolError.message}`,
+              createdAt: new Date(),
+              userId: "system-error",
+              owner: "MCP Tool Error",
+              type: "error",
+            });
+          }
+        }
+      }
       
-      // Get the AI's text response and clean it
-      const aiText = ozwellResponse.answer || ozwellResponse.responseText || "Ozwell LLM response received.";
-      const cleanedText = cleanResponseText(aiText);
-      
-      // Display the cleaned response to the user
+      const aiText = ozwellResponse.answer || ozwellResponse.responseText || "Response received from Ozwell.";
       await Messages.insertAsync({
-        text: cleanedText,
+        text: aiText,
         createdAt: new Date(),
         userId: "ozwell-ai",
         owner: "Ozwell AI",
         type: "ai",
       });
       
-      // Attempt to execute tools from Ozwell's response using MCP SDK servers
-      console.log("Attempting to execute tools from Ozwell response via MCP SDK servers");
-      await executeToolsFromResponse(ozwellResponse);
-      
       return ozwellResponse;
     } catch (error) {
       await Messages.insertAsync({
-        text: `❌ Error communicating with AI: ${error.message}`,
+        text: `❌ Error communicating with Ozwell AI: ${error.message}`,
         createdAt: new Date(),
         userId: "system-error",
         owner: "System",
@@ -357,32 +331,29 @@ The system uses MCP SDK servers for all database operations.`;
     }
   },
 
-  // MCP SDK server methods
+  // Direct MCP SDK server methods for manual testing
   async "mcp.callMongoSdk"(toolName, params) {
     check(toolName, String);
     check(params, Object);
     
-    console.log(`📡 Calling MongoDB MCP SDK server tool: ${toolName}`, params);
     try {
       const result = await mcpSdkClient.callMongoDbMcp(toolName, params);
       
       await Messages.insertAsync({
-        text: `MongoDB MCP SDK Server (${toolName}) Result: ${JSON.stringify(result, null, 2)}`,
+        text: `MongoDB Result: ${JSON.stringify(result, null, 2)}`,
         createdAt: new Date(), 
         userId: "system-mcp", 
-        owner: "MongoDB MCP SDK Server", 
+        owner: "MongoDB MCP Server", 
         type: "mcp-response"
       });
       
       return result;
     } catch (error) {
-      console.error(`❌ Error calling MongoDB MCP SDK server (${toolName}):`, error);
-      
       await Messages.insertAsync({
-        text: `❌ Error calling MongoDB MCP SDK server (${toolName}): ${error.reason || error.message}`,
+        text: `❌ MongoDB Error: ${error.reason || error.message}`,
         createdAt: new Date(), 
         userId: "system-error", 
-        owner: "MCP SDK Client", 
+        owner: "MCP Client", 
         type: "error"
       });
       
@@ -394,27 +365,24 @@ The system uses MCP SDK servers for all database operations.`;
     check(toolName, String);
     check(params, Object);
 
-    console.log(`📡 Calling Elasticsearch MCP SDK server tool: ${toolName}`, params);
     try {
       const result = await mcpSdkClient.callElasticsearchMcp(toolName, params);
       
       await Messages.insertAsync({
-        text: `Elasticsearch MCP SDK Server (${toolName}) Result: ${JSON.stringify(result, null, 2)}`,
+        text: `Elasticsearch Result: ${JSON.stringify(result, null, 2)}`,
         createdAt: new Date(), 
         userId: "system-mcp", 
-        owner: "Elasticsearch MCP SDK Server", 
+        owner: "Elasticsearch MCP Server", 
         type: "mcp-response"
       });
       
       return result;
     } catch (error) {
-      console.error(`❌ Error calling Elasticsearch MCP SDK server (${toolName}):`, error);
-      
       await Messages.insertAsync({
-        text: `❌ Error calling Elasticsearch MCP SDK server (${toolName}): ${error.reason || error.message}`,
+        text: `❌ Elasticsearch Error: ${error.reason || error.message}`,
         createdAt: new Date(), 
         userId: "system-error", 
-        owner: "MCP SDK Client", 
+        owner: "MCP Client", 
         type: "error"
       });
       
@@ -422,234 +390,32 @@ The system uses MCP SDK servers for all database operations.`;
     }
   },
 
-  // Health check methods for MCP SDK servers
-  async "mcp.checkSdkHealth"() {
-    const results = {
-      mongodb: await mcpSdkClient.checkMongoDbMcpHealth(),
-      elasticsearch: await mcpSdkClient.checkElasticsearchMcpHealth()
-    };
-
-    // Display health check results
-    await Messages.insertAsync({
-      text: `🏥 MCP SDK Server Health Check:\n` +
-            `MongoDB: ${results.mongodb.status}\n` +
-            `Elasticsearch: ${results.elasticsearch.status}`,
-      createdAt: new Date(),
-      userId: "system-health",
-      owner: "MCP SDK Health Check",
-      type: "system-info",
-    });
-
-    return results;
-  },
-  
-  // Test method for MCP SDK server search
-  async "mcp.testSdkSearch"(searchTerm) {
-    check(searchTerm, String);
-    console.log(`Testing MCP SDK search for: ${searchTerm}`);
-    
-    try {
-      await Messages.insertAsync({
-        text: `🔍 Testing MCP SDK search for: "${searchTerm}"`,
-        createdAt: new Date(),
-        userId: "system-test",
-        owner: "MCP SDK Test",
-        type: "system-info",
-      });
-      
-      const result = await mcpSdkClient.callElasticsearchMcp('search_documents', {
-        index: DOC_PROCESSING_CONFIG.ELASTICSEARCH_INDEX,
-        query_body: {
-          query: {
-            match: {
-              text_content: searchTerm
-            }
-          }
-        }
-      });
-      
-      if (result && result.hits && result.hits.length > 0) {
-        const hits = result.hits;
-        
-        await Messages.insertAsync({
-          text: `✅ MCP SDK found ${hits.length} results for "${searchTerm}"`,
-          createdAt: new Date(),
-          userId: "system-elasticsearch",
-          owner: "Elasticsearch MCP SDK",
-          type: "system-info",
-        });
-        
-        // Display each hit (up to 3)
-        for (let i = 0; i < Math.min(hits.length, 3); i++) {
-          const hit = hits[i];
-          const source = hit._source || hit.source || {};
-          
-          let content = `📄 Result ${i+1}:\n`;
-          if (source.title) content += `Title: ${source.title}\n`;
-          if (source.text_content) {
-            const snippet = source.text_content.substring(0, 300) + 
-              (source.text_content.length > 300 ? "..." : "");
-            content += `Content: ${snippet}`;
-          }
-          
-          await Messages.insertAsync({
-            text: content,
-            createdAt: new Date(),
-            userId: "system-elasticsearch",
-            owner: "Elasticsearch MCP SDK Server",
-            type: "mcp-response",
-          });
-        }
-      } else {
-        await Messages.insertAsync({
-          text: `ℹ️ No results found for "${searchTerm}" via MCP SDK server`,
-          createdAt: new Date(),
-          userId: "system-elasticsearch",
-          owner: "Elasticsearch MCP SDK",
-          type: "system-info",
-        });
-      }
-      
-      return { success: true, resultsFound: result?.hits?.length || 0 };
-    } catch (error) {
-      console.error("Error testing MCP SDK search:", error);
-      await Messages.insertAsync({
-        text: `❌ Error testing MCP SDK search: ${error.message}`,
-        createdAt: new Date(),
-        userId: "system-error",
-        owner: "MCP SDK Test",
-        type: "error",
-      });
-      throw error;
-    }
-  },
   async "mcp.callFhirSdk"(toolName, params) {
     check(toolName, String);
     check(params, Object);
 
-    console.log(`📡 Calling FHIR MCP SDK server tool: ${toolName}`, params);
     try {
       const result = await mcpSdkClient.callFhirMcp(toolName, params);
       
       await Messages.insertAsync({
-        text: `FHIR MCP SDK Server (${toolName}) Result: ${JSON.stringify(result, null, 2)}`,
+        text: `FHIR Result: ${JSON.stringify(result, null, 2)}`,
         createdAt: new Date(), 
         userId: "system-mcp", 
-        owner: "FHIR MCP SDK Server", 
+        owner: "FHIR MCP Server", 
         type: "mcp-response"
       });
       
       return result;
     } catch (error) {
-      console.error(`❌ Error calling FHIR MCP SDK server (${toolName}):`, error);
-      
       await Messages.insertAsync({
-        text: `❌ Error calling FHIR MCP SDK server (${toolName}): ${error.reason || error.message}`,
+        text: `❌ FHIR Error: ${error.reason || error.message}`,
         createdAt: new Date(), 
         userId: "system-error", 
-        owner: "MCP SDK Client", 
+        owner: "MCP Client", 
         type: "error"
       });
       
       throw new Meteor.Error("mcp-fhir-sdk-error", `FHIR MCP SDK Server Error: ${error.message}`);
-    }
-  },
-
-  // Update the health check method:
-  async "mcp.checkSdkHealth"() {
-    const results = {
-      mongodb: await mcpSdkClient.checkMongoDbMcpHealth(),
-      elasticsearch: await mcpSdkClient.checkElasticsearchMcpHealth(),
-      fhir: await mcpSdkClient.checkFhirMcpHealth()
-    };
-
-    // Display health check results
-    await Messages.insertAsync({
-      text: `🏥 MCP SDK Server Health Check:\n` +
-            `MongoDB: ${results.mongodb.status}\n` +
-            `Elasticsearch: ${results.elasticsearch.status}\n` +
-            `FHIR EHR: ${results.fhir.status}`,
-      createdAt: new Date(),
-      userId: "system-health",
-      owner: "MCP SDK Health Check",
-      type: "system-info",
-    });
-
-    return results;
-  },
-
-  // Add a test method for FHIR searches:
-  async "mcp.testFhirSearch"(searchTerm) {
-    check(searchTerm, String);
-    console.log(`Testing FHIR MCP SDK search for: ${searchTerm}`);
-    
-    try {
-      await Messages.insertAsync({
-        text: `🔍 Testing FHIR MCP SDK search for patients named: "${searchTerm}"`,
-        createdAt: new Date(),
-        userId: "system-test",
-        owner: "FHIR MCP SDK Test",
-        type: "system-info",
-      });
-      
-      const result = await mcpSdkClient.callFhirMcp('search_patients', {
-        family: searchTerm,
-        _count: 5
-      });
-      
-      if (result && result.patients && result.patients.length > 0) {
-        const patients = result.patients;
-        
-        await Messages.insertAsync({
-          text: `✅ FHIR MCP SDK found ${patients.length} patients matching "${searchTerm}"`,
-          createdAt: new Date(),
-          userId: "system-fhir",
-          owner: "FHIR MCP SDK",
-          type: "system-info",
-        });
-        
-        // Display each patient (up to 3)
-        for (let i = 0; i < Math.min(patients.length, 3); i++) {
-          const patient = patients[i];
-          
-          let content = `👤 Patient ${i+1}:\n`;
-          content += `Name: ${patient.name}\n`;
-          content += `ID: ${patient.id}\n`;
-          if (patient.gender) content += `Gender: ${patient.gender}\n`;
-          if (patient.birthDate) content += `Birth Date: ${patient.birthDate}\n`;
-          if (patient.identifiers && patient.identifiers.length > 0) {
-            content += `Identifiers: ${patient.identifiers.map(id => `${id.type || 'Unknown'}: ${id.value}`).join(', ')}\n`;
-          }
-          
-          await Messages.insertAsync({
-            text: content,
-            createdAt: new Date(),
-            userId: "system-fhir",
-            owner: "FHIR MCP SDK Server",
-            type: "mcp-response",
-          });
-        }
-      } else {
-        await Messages.insertAsync({
-          text: `ℹ️ No patients found with family name "${searchTerm}" via FHIR MCP SDK server`,
-          createdAt: new Date(),
-          userId: "system-fhir",
-          owner: "FHIR MCP SDK",
-          type: "system-info",
-        });
-      }
-      
-      return { success: true, patientsFound: result?.patients?.length || 0 };
-    } catch (error) {
-      console.error("Error testing FHIR MCP SDK search:", error);
-      await Messages.insertAsync({
-        text: `❌ Error testing FHIR MCP SDK search: ${error.message}`,
-        createdAt: new Date(),
-        userId: "system-error",
-        owner: "FHIR MCP SDK Test",
-        type: "error",
-      });
-      throw error;
     }
   }
 });

@@ -1,6 +1,3 @@
-// mcp-servers/mongodb-server/server.js
-// Fixed MongoDB MCP Server with proper transport
-
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {

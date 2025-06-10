@@ -1,4 +1,3 @@
-// imports/mcp/embeddings.js
 import { Meteor } from "meteor/meteor";
 import { HTTP } from "meteor/http";
 

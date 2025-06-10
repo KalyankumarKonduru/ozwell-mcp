@@ -1,4 +1,3 @@
-// imports/mcp/document-processor.js
 import { Meteor } from 'meteor/meteor';
 import { check } from 'meteor/check';
 import { Buffer } from 'buffer';
