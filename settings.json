@@ -11,7 +11,7 @@
     "_comment_mongo": "MongoDB Atlas connection for integrated fallback",
     "MONGO_URL": "mongodb+srv://kalyankitkat555:kalyankitkat5@cluster0.yh9dreh.mongodb.net/ozwell?retryWrites=true&w=majority&appName=Cluster0",
     
-    "_comment_mcp_servers": "External MCP server URLs",
+    "_comment_mcp_servers": "HTTP MCP server URLs",
     "MONGODB_MCP_SERVER_URL": "http://localhost:3001/mcp",
     "ELASTICSEARCH_MCP_SERVER_URL": "http://localhost:3002/mcp",
     "FHIR_MCP_SERVER_URL": "http://localhost:3003/mcp",
@@ -33,7 +33,7 @@
     "RAG_MAX_CHUNKS": 50,
     
     "EMBEDDINGS_API_URL": "https://api.bluehive.com/embeddings",
-    "EMBEDDINGS_API_KEY": "BHSK-sandbox-FC5AWzqhZWwJvJqznpYYHVazREF0wKDL_BQL1vk_",
+    "EMBEDDINGS_API_KEY": "BHSK-production-339cmA3yviAA8daaFvdAXbOLwRwLm2cBhJflaF9M",
     "EMBEDDINGS_MODEL": "text-embedding-3-small"
   }
 }

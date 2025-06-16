@@ -1,7 +1,7 @@
 {
     "name": "ozwell-mcp-servers",
     "version": "1.0.0",
-    "description": "Official MCP SDK servers for MongoDB Atlas and Elasticsearch Cloud",
+    "description": "HTTP-based MCP servers for Ozwell integration (converted from stdio)",
     "type": "module",
     "scripts": {
         "start": "concurrently \"npm run start:mongo\" \"npm run start:elasticsearch\" \"npm run start:fhir\"",
@@ -9,17 +9,13 @@
         "start:elasticsearch": "node elasticsearch-server/server.js",
         "start:fhir": "node fhir-server/server.js",
         "dev": "concurrently \"npm run dev:mongo\" \"npm run dev:elasticsearch\" \"npm run dev:fhir\"",
-        "dev:fhir": "nodemon fhir-server/server.js",
-        "mcp:fhir": "node fhir-server/server.js",
         "dev:mongo": "nodemon mongodb-server/server.js",
         "dev:elasticsearch": "nodemon elasticsearch-server/server.js",
-        "test": "echo \"No tests specified\" && exit 0",
-        "mcp:mongo": "node mongodb-server/server.js",
-        "mcp:elasticsearch": "node elasticsearch-server/server.js"
+        "dev:fhir": "nodemon fhir-server/server.js",
+        "test": "echo \"No tests specified\" && exit 0"
     },
     "dependencies": {
         "@elastic/elasticsearch": "^9.0.2",
-        "@modelcontextprotocol/sdk": "^1.12.0",
         "axios": "^1.9.0",
         "cors": "^2.8.5",
         "dotenv": "^16.5.0",
@@ -35,9 +31,10 @@
         "model-context-protocol",
         "mongodb",
         "elasticsearch",
-        "ai",
+        "fhir",
+        "http",
         "ozwell",
-        "official-sdk"
+        "ai"
     ],
     "author": "Kalyankumar",
     "license": "MIT"

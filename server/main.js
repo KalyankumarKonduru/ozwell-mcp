@@ -1,6 +1,8 @@
 import { Meteor } from "meteor/meteor";
 import { MongoInternals } from "meteor/mongo";
 import { Accounts } from "meteor/accounts-base";
+// Add this import at the top
+import "./ozwell-integration.js";
 
 // -------------------------------
 // Ensure Meteor uses external Mongo if MONGO_URL is set
