@@ -1,15 +1,15 @@
-// imports/api/methods.js - Clean implementation without tool prompting
+// imports/api/methods.js - Claude MCP Connector Implementation
 
 import { Meteor } from "meteor/meteor";
 import { check } from "meteor/check";
 import { Messages } from "./messages.js";
-import { mcpOzwellClient, mcpSdkClient } from "../mcp/client.js"; 
+import { mcpClaudeClient, mcpSdkClient } from "../mcp/client.js"; 
 import { extractTextFromFile, chunkText, generateEmbeddingsForChunks, extractStructuredData } from "../mcp/document-processor.js";
 
 // Document processing config
 const DOC_PROCESSING_CONFIG = {
-  ELASTICSEARCH_INDEX: Meteor.settings.private?.RAG_ELASTICSEARCH_INDEX || "ozwell_documents",
-  ELASTICSEARCH_INDEX_CHUNKS: Meteor.settings.private?.RAG_ELASTICSEARCH_INDEX_CHUNKS || "ozwell_document_chunks",
+  ELASTICSEARCH_INDEX: Meteor.settings.private?.RAG_ELASTICSEARCH_INDEX || "claude_documents",
+  ELASTICSEARCH_INDEX_CHUNKS: Meteor.settings.private?.RAG_ELASTICSEARCH_INDEX_CHUNKS || "claude_document_chunks",
   CHUNK_SIZE: Meteor.settings.private?.RAG_CHUNK_SIZE || 1000,
   CHUNK_OVERLAP: Meteor.settings.private?.RAG_CHUNK_OVERLAP || 200,
   MAX_CHUNKS: Meteor.settings.private?.RAG_MAX_CHUNKS || 50,
@@ -43,22 +43,33 @@ Meteor.methods({
       return;
     }
 
-    // Handle regular text messages - just send to Ozwell directly
+    // Handle regular text messages - send to Claude with MCP
     try {
-      const ozwellResponse = await mcpOzwellClient.sendMessageToOzwell(text);
+      const claudeResponse = await mcpClaudeClient.sendMessageToClaude(text);
       
       await Messages.insertAsync({
-        text: ozwellResponse.responseText || ozwellResponse.answer,
+        text: claudeResponse.responseText || claudeResponse.answer,
         createdAt: new Date(),
-        userId: "ozwell-ai",
-        owner: "Ozwell AI",
+        userId: "claude-ai",
+        owner: "Claude AI",
         type: "ai",
       });
+
+      // Log MCP tool usage if any
+      if (claudeResponse.mcpToolUses && claudeResponse.mcpToolUses.length > 0) {
+        await Messages.insertAsync({
+          text: `🔧 Claude used ${claudeResponse.mcpToolUses.length} MCP tool(s): ${claudeResponse.mcpToolUses.map(t => `${t.name} (${t.server_name})`).join(', ')}`,
+          createdAt: new Date(),
+          userId: "system-mcp",
+          owner: "MCP Activity",
+          type: "system-info",
+        });
+      }
       
-      return ozwellResponse;
+      return claudeResponse;
     } catch (error) {
       await Messages.insertAsync({
-        text: `❌ Error communicating with AI: ${error.message}`,
+        text: `❌ Error communicating with Claude: ${error.message}`,
         createdAt: new Date(),
         userId: "system-error",
         owner: "System",
@@ -104,178 +115,56 @@ Meteor.methods({
         return;
       }
       
-      // Create document record
-      const documentRecord = {
-        _id: documentId,
-        title: fileUploadInfo.name,
-        original_filename: fileUploadInfo.name,
-        mime_type: fileUploadInfo.type,
-        size_bytes: fileUploadInfo.size,
-        uploaded_at: new Date(),
-        text_content: extractionResult.text,
-        text_extraction_method: extractionResult.method,
-        metadata: extractionResult.metadata || {},
-        user_context: userContext,
-        processed: false,
+      // Store document info for Claude to potentially use via MCP
+      const documentSummary = {
+        filename: fileUploadInfo.name,
+        size: fileUploadInfo.size,
+        type: fileUploadInfo.type,
+        textLength: extractionResult.text.length,
+        extractionMethod: extractionResult.method,
+        userContext: userContext,
+        processedAt: new Date()
       };
       
-      // Store in MongoDB
-      await Messages.insertAsync({
-        text: `💾 Storing document in MongoDB...`,
-        createdAt: new Date(),
-        userId: "system-process",
-        owner: "Document Processor",
-        type: "processing",
-      });
-      
-      await Meteor.callAsync('mcp.callMongoHttp', 'insert_document', {
-        collection: 'documents',
-        document: documentRecord
-      });
-      
-      // Create chunks for better searchability
-      await Messages.insertAsync({
-        text: `✂️ Creating searchable chunks...`,
-        createdAt: new Date(),
-        userId: "system-process",
-        owner: "Document Processor",
-        type: "processing",
-      });
-      
-      const textChunks = chunkText(
-        extractionResult.text, 
-        DOC_PROCESSING_CONFIG.CHUNK_SIZE, 
-        DOC_PROCESSING_CONFIG.CHUNK_OVERLAP, 
-        DOC_PROCESSING_CONFIG.MAX_CHUNKS
-      );
-      
-      // Generate embeddings
-      await Messages.insertAsync({
-        text: `🧠 Generating embeddings for search...`,
-        createdAt: new Date(),
-        userId: "system-process",
-        owner: "Document Processor",
-        type: "processing",
-      });
-      
-      const chunksWithEmbeddings = await generateEmbeddingsForChunks(textChunks);
-      
-      // Store chunks
-      const chunkRecords = chunksWithEmbeddings.map(chunk => ({
-        document_id: documentId,
-        chunk_index: chunk.index,
-        text: chunk.text,
-        char_count: chunk.charCount,
-        embedding_vector: chunk.embedding,
-        created_at: new Date()
-      }));
-      
-      if (chunkRecords.length > 0) {
-        await Meteor.callAsync('mcp.callMongoHttp', 'insert_document', {
-          collection: 'document_chunks',
-          document: chunkRecords
-        });
-      }
-      
-      // Extract structured data
-      const structuredData = await extractStructuredData(extractionResult.text, userContext);
-      
-      // Index in Elasticsearch
-      await Messages.insertAsync({
-        text: `🔗 Indexing in Elasticsearch...`,
-        createdAt: new Date(),
-        userId: "system-process",
-        owner: "Document Processor",
-        type: "processing",
-      });
-      
-      const esDocument = {
-        title: fileUploadInfo.name,
-        text_content: extractionResult.text,
-        summary: extractionResult.text.substring(0, 300) + (extractionResult.text.length > 300 ? "..." : ""),
-        document_id: documentId,
-        original_filename: fileUploadInfo.name,
-        mime_type: fileUploadInfo.type,
-        size_bytes: fileUploadInfo.size,
-        uploaded_at: new Date(),
-        metadata: extractionResult.metadata || {},
-        structured_data: structuredData,
-        user_context: userContext,
-        document_type: structuredData.detection?.documentType || ["unknown"],
-        text_length: extractionResult.text.length,
-        chunk_count: chunkRecords.length,
-      };
-      
-      // Add embedding from first chunk
-      if (chunksWithEmbeddings.length > 0 && chunksWithEmbeddings[0].embedding) {
-        esDocument.embedding_vector = chunksWithEmbeddings[0].embedding;
-      }
-      
-      await Meteor.callAsync('mcp.callElasticsearchHttp', 'index_document', {
-        index: DOC_PROCESSING_CONFIG.ELASTICSEARCH_INDEX,
-        document_body: esDocument
-      });
-      
-      // Index chunks
-      for (const chunk of chunksWithEmbeddings) {
-        if (chunk.embedding) {
-          const chunkDoc = {
-            document_id: documentId,
-            chunk_index: chunk.index,
-            text: chunk.text,
-            title: fileUploadInfo.name,
-            embedding_vector: chunk.embedding,
-            char_count: chunk.charCount,
-            uploaded_at: new Date()
-          };
-          
-          await Meteor.callAsync('mcp.callElasticsearchHttp', 'index_document', {
-            index: DOC_PROCESSING_CONFIG.ELASTICSEARCH_INDEX_CHUNKS,
-            document_body: chunkDoc
-          });
-        }
-      }
-      
-      // Mark as processed
-      await Meteor.callAsync('mcp.callMongoHttp', 'update_documents', {
-        collection: 'documents',
-        query: { _id: documentId },
-        update: { 
-          $set: { 
-            processed: true,
-            processed_at: new Date(),
-            structured_data: structuredData,
-            chunk_count: chunkRecords.length
-          } 
-        }
-      });
-      
-      // Success message
       await Messages.insertAsync({
         text: `✅ Document "${fileUploadInfo.name}" successfully processed! ` +
-              `Extracted ${extractionResult.text.length} characters and created ${chunkRecords.length} searchable chunks.`,
+              `Extracted ${extractionResult.text.length} characters. ` +
+              `The document is now available for Claude to access via MCP tools.`,
         createdAt: new Date(),
         userId: "system-process",
         owner: "Document Processor",
         type: "system-info",
       });
       
-      // Let Ozwell analyze the document if context provided
+      // Let Claude analyze the document with MCP access
       if (userContext && userContext.trim().length > 0) {
-        const analysisPrompt = `I've uploaded a document "${fileUploadInfo.name}" with this context: "${userContext}". The document has been processed and contains ${extractionResult.text.length} characters. What can you tell me about this document?`;
+        const analysisPrompt = `I've uploaded a document "${fileUploadInfo.name}" with this context: "${userContext}". ` +
+                             `The document has been processed and contains ${extractionResult.text.length} characters. ` +
+                             `Please analyze this document and tell me what you can learn from it. You can use your MCP tools if needed.`;
         
         try {
-          const ozwellResponse = await mcpOzwellClient.sendMessageToOzwell(analysisPrompt);
+          const claudeResponse = await mcpClaudeClient.sendMessageToClaude(analysisPrompt);
           
           await Messages.insertAsync({
-            text: ozwellResponse.responseText || ozwellResponse.answer,
+            text: claudeResponse.responseText || claudeResponse.answer,
             createdAt: new Date(),
-            userId: "ozwell-ai",
-            owner: "Ozwell AI",
+            userId: "claude-ai",
+            owner: "Claude AI",
             type: "ai",
           });
+
+          // Log any MCP tool usage
+          if (claudeResponse.mcpToolUses && claudeResponse.mcpToolUses.length > 0) {
+            await Messages.insertAsync({
+              text: `🔧 Claude used ${claudeResponse.mcpToolUses.length} MCP tool(s) for document analysis`,
+              createdAt: new Date(),
+              userId: "system-mcp",
+              owner: "MCP Activity",
+              type: "system-info",
+            });
+          }
         } catch (error) {
-          console.error("Error getting Ozwell analysis:", error);
+          console.error("Error getting Claude analysis:", error);
         }
       }
       
@@ -291,28 +180,32 @@ Meteor.methods({
     }
   },
 
-  // HTTP MCP server methods
-  async "mcp.callMongoHttp"(toolName, params) {
-    check(toolName, String);
-    check(params, Object);
-    
+  // MCP Status and Info methods
+  async "mcp.getStatus"() {
     try {
-      const result = await mcpSdkClient.callMongoDbMcp(toolName, params);
+      const mcpInfo = mcpSdkClient.getMCPServersInfo();
       
       await Messages.insertAsync({
-        text: `MongoDB Result: ${JSON.stringify(result, null, 2)}`,
+        text: `🔧 **Claude MCP Connector Status**\n\n` +
+              `Transport: ${mcpInfo.transport}\n` +
+              `Servers Configured: ${mcpInfo.total}\n\n` +
+              mcpInfo.servers.map(server => 
+                `**${server.name}**\n` +
+                `  URL: ${server.url}\n` +
+                `  Status: ${server.enabled ? '✅ Enabled' : '❌ Disabled'}\n`
+              ).join('\n'),
         createdAt: new Date(), 
         userId: "system-mcp", 
-        owner: "MongoDB MCP", 
+        owner: "MCP Status", 
         type: "mcp-response"
       });
       
-      return result;
+      return mcpInfo;
     } catch (error) {
-      console.error(`❌ Error calling MongoDB MCP (${toolName}):`, error);
+      console.error("❌ Error getting MCP status:", error);
       
       await Messages.insertAsync({
-        text: `❌ Error calling MongoDB MCP (${toolName}): ${error.reason || error.message}`,
+        text: `❌ Error getting MCP status: ${error.message}`,
         createdAt: new Date(), 
         userId: "system-error", 
         owner: "MCP Client", 
@@ -323,30 +216,43 @@ Meteor.methods({
     }
   },
 
-  async "mcp.callElasticsearchHttp"(toolName, params) {
-    check(toolName, String);
-    check(params, Object);
-
+  async "mcp.testConnection"() {
     try {
-      const result = await mcpSdkClient.callElasticsearchMcp(toolName, params);
+      await Messages.insertAsync({
+        text: `🧪 Testing Claude MCP connection...`,
+        createdAt: new Date(), 
+        userId: "system-test", 
+        owner: "MCP Test", 
+        type: "system-info"
+      });
+
+      const result = await mcpClaudeClient.testMCPConnection();
+      
+      let statusText = `🧪 **MCP Connection Test Results**\n\n`;
+      statusText += `Status: ${result.status === 'healthy' ? '✅ Healthy' : '❌ Unhealthy'}\n`;
+      statusText += `Servers Connected: ${result.mcpServersConnected || 0}\n`;
+      
+      if (result.error) {
+        statusText += `Error: ${result.error}\n`;
+      }
       
       await Messages.insertAsync({
-        text: `Elasticsearch Result: ${JSON.stringify(result, null, 2)}`,
+        text: statusText,
         createdAt: new Date(), 
-        userId: "system-mcp", 
-        owner: "Elasticsearch MCP", 
-        type: "mcp-response"
+        userId: "system-test", 
+        owner: "MCP Test", 
+        type: result.status === 'healthy' ? "system-info" : "error"
       });
       
       return result;
     } catch (error) {
-      console.error(`❌ Error calling Elasticsearch MCP (${toolName}):`, error);
+      console.error("Error testing MCP connection:", error);
       
       await Messages.insertAsync({
-        text: `❌ Error calling Elasticsearch MCP (${toolName}): ${error.reason || error.message}`,
+        text: `❌ MCP connection test failed: ${error.message}`,
         createdAt: new Date(), 
         userId: "system-error", 
-        owner: "MCP Client", 
+        owner: "MCP Test", 
         type: "error"
       });
       
@@ -354,114 +260,108 @@ Meteor.methods({
     }
   },
 
-  async "mcp.callFhirHttp"(toolName, params) {
-    check(toolName, String);
-    check(params, Object);
-
-    try {
-      const result = await mcpSdkClient.callFhirMcp(toolName, params);
-      
-      await Messages.insertAsync({
-        text: `FHIR Result: ${JSON.stringify(result, null, 2)}`,
-        createdAt: new Date(), 
-        userId: "system-mcp", 
-        owner: "FHIR MCP", 
-        type: "mcp-response"
-      });
-      
-      return result;
-    } catch (error) {
-      console.error(`❌ Error calling FHIR MCP (${toolName}):`, error);
-      
-      await Messages.insertAsync({
-        text: `❌ Error calling FHIR MCP (${toolName}): ${error.reason || error.message}`,
-        createdAt: new Date(), 
-        userId: "system-error", 
-        owner: "MCP Client", 
-        type: "error"
-      });
-      
-      throw error;
-    }
-  },
-
-  // Test method for searching documents
-  async "mcp.testSearch"(searchTerm) {
-    check(searchTerm, String);
-    console.log(`Testing search for: ${searchTerm}`);
-    
+  async "mcp.askAboutTools"() {
     try {
       await Messages.insertAsync({
-        text: `🔍 Testing search for: "${searchTerm}"`,
+        text: `🔧 Asking Claude about available MCP tools...`,
+        createdAt: new Date(), 
+        userId: "system-query", 
+        owner: "MCP Query", 
+        type: "system-info"
+      });
+
+      const claudeResponse = await mcpClaudeClient.sendMessageToClaude(
+        "What MCP tools do you have access to? Please list all available tools and describe what each one does."
+      );
+      
+      await Messages.insertAsync({
+        text: claudeResponse.responseText || claudeResponse.answer,
         createdAt: new Date(),
-        userId: "system-test",
-        owner: "Search Test",
-        type: "system-info",
+        userId: "claude-ai",
+        owner: "Claude AI",
+        type: "ai",
       });
-      
-      const result = await mcpSdkClient.callElasticsearchMcp('search_documents', {
-        index: DOC_PROCESSING_CONFIG.ELASTICSEARCH_INDEX,
-        query_body: {
-          query: {
-            multi_match: {
-              query: searchTerm,
-              fields: ['title', 'text_content', 'summary']
-            }
-          }
-        },
-        size: 5
-      });
-      
-      if (result && result.hits && result.hits.length > 0) {
+
+      // Show MCP activity if tools were used
+      if (claudeResponse.mcpToolUses && claudeResponse.mcpToolUses.length > 0) {
         await Messages.insertAsync({
-          text: `✅ Found ${result.hits.length} results for "${searchTerm}"`,
+          text: `🔧 Claude discovered tools using ${claudeResponse.mcpToolUses.length} MCP operation(s)`,
           createdAt: new Date(),
-          userId: "system-search",
-          owner: "Search Test",
-          type: "system-info",
-        });
-        
-        // Display results
-        for (let i = 0; i < Math.min(result.hits.length, 3); i++) {
-          const hit = result.hits[i];
-          const source = hit._source || {};
-          
-          let content = `📄 Result ${i+1}:\n`;
-          if (source.title) content += `Title: ${source.title}\n`;
-          if (source.text_content) {
-            const snippet = source.text_content.substring(0, 300) + 
-              (source.text_content.length > 300 ? "..." : "");
-            content += `Content: ${snippet}`;
-          }
-          
-          await Messages.insertAsync({
-            text: content,
-            createdAt: new Date(),
-            userId: "system-search",
-            owner: "Search Result",
-            type: "mcp-response",
-          });
-        }
-      } else {
-        await Messages.insertAsync({
-          text: `ℹ️ No results found for "${searchTerm}"`,
-          createdAt: new Date(),
-          userId: "system-search",
-          owner: "Search Test",
+          userId: "system-mcp",
+          owner: "MCP Activity",
           type: "system-info",
         });
       }
       
-      return { success: true, resultsFound: result?.hits?.length || 0 };
+      return claudeResponse;
     } catch (error) {
-      console.error("Error testing search:", error);
+      console.error("Error asking about tools:", error);
+      
       await Messages.insertAsync({
-        text: `❌ Error testing search: ${error.message}`,
-        createdAt: new Date(),
-        userId: "system-error",
-        owner: "Search Test",
-        type: "error",
+        text: `❌ Error querying MCP tools: ${error.message}`,
+        createdAt: new Date(), 
+        userId: "system-error", 
+        owner: "MCP Query", 
+        type: "error"
       });
+      
+      throw error;
+    }
+  },
+
+  async "mcp.demoSearch"(query) {
+    check(query, String);
+    
+    try {
+      await Messages.insertAsync({
+        text: `🔍 Demonstrating MCP search capabilities with query: "${query}"`,
+        createdAt: new Date(), 
+        userId: "system-demo", 
+        owner: "MCP Demo", 
+        type: "system-info"
+      });
+
+      const claudeResponse = await mcpClaudeClient.sendMessageToClaude(
+        `Please search for documents or data related to "${query}" using your available MCP tools. Show me what you can find and explain what tools you used.`
+      );
+      
+      await Messages.insertAsync({
+        text: claudeResponse.responseText || claudeResponse.answer,
+        createdAt: new Date(),
+        userId: "claude-ai",
+        owner: "Claude AI",
+        type: "ai",
+      });
+
+      // Show detailed MCP activity
+      if (claudeResponse.mcpToolUses && claudeResponse.mcpToolUses.length > 0) {
+        let mcpActivity = `🔧 **MCP Tools Used:**\n\n`;
+        claudeResponse.mcpToolUses.forEach((tool, index) => {
+          mcpActivity += `${index + 1}. **${tool.name}** (${tool.server_name})\n`;
+          mcpActivity += `   Input: ${JSON.stringify(tool.input)}\n\n`;
+        });
+        
+        await Messages.insertAsync({
+          text: mcpActivity,
+          createdAt: new Date(),
+          userId: "system-mcp",
+          owner: "MCP Activity",
+          type: "mcp-response",
+        });
+      }
+      
+      return claudeResponse;
+    } catch (error) {
+      console.error("Error in MCP demo search:", error);
+      
+      await Messages.insertAsync({
+        text: `❌ MCP demo search failed: ${error.message}`,
+        createdAt: new Date(), 
+        userId: "system-error", 
+        owner: "MCP Demo", 
+        type: "error"
+      });
+      
       throw error;
     }
   }

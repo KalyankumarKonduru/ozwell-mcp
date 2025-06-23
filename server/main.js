@@ -1,8 +1,8 @@
 import { Meteor } from "meteor/meteor";
 import { MongoInternals } from "meteor/mongo";
-import { Accounts } from "meteor/accounts-base";
-// Add this import at the top
-import "./ozwell-integration.js";
+
+// Import SSE endpoints for Claude MCP Connector
+import "./mcp-sse-endpoints.js";
 
 // -------------------------------
 // Ensure Meteor uses external Mongo if MONGO_URL is set
@@ -32,14 +32,19 @@ console.log("Ozwell MCP Chat Server Started");
 // Check for required environment variables
 const settings = Meteor.settings.private || {};
 
-if (!settings.OZWELL_API_KEY) {
-console.warn("WARNING: Ozwell API Key not found in settings.json. AI features may not work.");
+if (!settings.CLAUDE_API_KEY) {
+console.warn("WARNING: Claude API Key not found in settings.json. AI features may not work.");
 }
-if (!settings.MONGODB_MCP_SERVER_URL) {
-console.warn("WARNING: MongoDB MCP Server URL not found in settings.json.");
-}
-if (!settings.ELASTICSEARCH_MCP_SERVER_URL) {
-console.warn("WARNING: Elasticsearch MCP Server URL not found in settings.json.");
-}
-});
 
+console.log("🔧 Claude MCP Connector configured:");
+console.log(`   Model: ${settings.CLAUDE_MODEL || 'claude-sonnet-4-20250514'}`);
+console.log(`   MongoDB SSE: ${settings.MONGODB_MCP_SERVER_URL || 'Not configured'}`);
+console.log(`   Elasticsearch SSE: ${settings.ELASTICSEARCH_MCP_SERVER_URL || 'Not configured'}`);
+console.log(`   FHIR SSE: ${settings.FHIR_MCP_SERVER_URL || 'Not configured'}`);
+
+console.log("\n🚀 Ready for Claude MCP demonstrations!");
+console.log("   - Upload documents for processing");
+console.log("   - Ask Claude about available tools");
+console.log("   - Try MCP search demonstrations");
+console.log("   - Claude will automatically use MCP servers when needed");
+});

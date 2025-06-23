@@ -3,26 +3,26 @@
     "appName": "Ozwell MCP Chat"
   },
   "private": {
-    "OZWELL_API_KEY": "BHSK-production-339cmA3yviAA8daaFvdAXbOLwRwLm2cBhJflaF9M",
-    "OZWELL_API_URL": "https://ai.bluehive.com/api",
+    "CLAUDE_API_KEY": "",
+    "CLAUDE_MODEL": "claude-sonnet-4-20250514",
 
     "FHIR_BASE_URL": "https://hapi.fhir.org/baseR4",
     
-    "_comment_mongo": "MongoDB Atlas connection for integrated fallback",
-    "MONGO_URL": "mongodb+srv://kalyankitkat555:kalyankitkat5@cluster0.yh9dreh.mongodb.net/ozwell?retryWrites=true&w=majority&appName=Cluster0",
+    "_comment_mongo": "MongoDB Atlas connection for document storage",
+    "MONGO_URL": "mongodb+srv://kalyankitkat555:kalyankitkat5@cluster0.yh9dreh.mongodb.net/claude_mcp?retryWrites=true&w=majority&appName=Cluster0",
     
-    "_comment_mcp_servers": "HTTP MCP server URLs",
-    "MONGODB_MCP_SERVER_URL": "http://localhost:3001/mcp",
-    "ELASTICSEARCH_MCP_SERVER_URL": "http://localhost:3002/mcp",
-    "FHIR_MCP_SERVER_URL": "http://localhost:3003/mcp",
+    "_comment_mcp_servers": "MCP server URLs for Claude connector (SSE endpoints)",
+    "MONGODB_MCP_SERVER_URL": "http://localhost:3000/mcp/mongodb/sse",
+    "ELASTICSEARCH_MCP_SERVER_URL": "http://localhost:3000/mcp/elasticsearch/sse",
+    "FHIR_MCP_SERVER_URL": "http://localhost:3000/mcp/fhir/sse",
 
-    "_comment_elasticsearch": "Elasticsearch Cloud config for integrated fallback",
+    "_comment_elasticsearch": "Elasticsearch Cloud config",
     "ELASTICSEARCH_NODE": "https://0256db538dba4d808e1fd7e28b9ccd9f.us-central1.gcp.cloud.es.io:443", 
     "ELASTICSEARCH_API_KEY": "djUzTVZaY0Jmd0IteGM0a194a2w6UEFsWXhXSlpiTFpjeEI0eEVWVmVoZw==",
     "ELASTICSEARCH_INSECURE_SSL": false,
 
-    "RAG_ELASTICSEARCH_INDEX": "ozwell_documents",
-    "RAG_ELASTICSEARCH_INDEX_CHUNKS": "ozwell_document_chunks",
+    "RAG_ELASTICSEARCH_INDEX": "claude_documents",
+    "RAG_ELASTICSEARCH_INDEX_CHUNKS": "claude_document_chunks",
     "RAG_ELASTICSEARCH_SEARCH_FIELDS": ["title", "text_content", "summary"],
     "RAG_ELASTICSEARCH_SOURCE_FIELDS": ["title", "text_content"],
     "RAG_MAX_SNIPPETS": 3,
@@ -30,10 +30,6 @@
     "RAG_USE_VECTOR_SEARCH": true,
     "RAG_CHUNK_SIZE": 1000,
     "RAG_CHUNK_OVERLAP": 200,
-    "RAG_MAX_CHUNKS": 50,
-    
-    "EMBEDDINGS_API_URL": "https://api.bluehive.com/embeddings",
-    "EMBEDDINGS_API_KEY": "BHSK-production-339cmA3yviAA8daaFvdAXbOLwRwLm2cBhJflaF9M",
-    "EMBEDDINGS_MODEL": "text-embedding-3-small"
+    "RAG_MAX_CHUNKS": 50
   }
 }
