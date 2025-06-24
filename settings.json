@@ -3,8 +3,8 @@
     "appName": "Ozwell MCP Chat"
   },
   "private": {
-    "CLAUDE_API_KEY": "",
-    "CLAUDE_MODEL": "claude-sonnet-4-20250514",
+    "CLAUDE_API_KEY": "API KEY HERE",
+    "CLAUDE_MODEL": "claude-opus-4-20250514",
 
     "FHIR_BASE_URL": "https://hapi.fhir.org/baseR4",
     

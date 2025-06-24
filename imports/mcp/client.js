@@ -1,50 +1,54 @@
-// imports/mcp/client.js - Debug Version
+// imports/mcp/client.js - Robust Claude Client with Better Fallback
 
 import { Meteor } from "meteor/meteor";
 import { HTTP } from "meteor/http";
 
 const CLAUDE_API_URL = "https://api.anthropic.com/v1/messages";
 const CLAUDE_API_KEY = Meteor.settings.private?.CLAUDE_API_KEY;
-const CLAUDE_MODEL = "claude-sonnet-4-20250514"; // Use stable model first
+const CLAUDE_MODEL = "claude-opus-4-20250514";
 
-// Debug API key on startup
-if (Meteor.isServer) {
-  Meteor.startup(() => {
-    console.log("🔍 DEBUG: API Key Check");
-    console.log("   Settings.private exists:", !!Meteor.settings.private);
-    console.log("   CLAUDE_API_KEY exists:", !!CLAUDE_API_KEY);
-    console.log("   API Key length:", CLAUDE_API_KEY?.length || 0);
-    console.log("   API Key starts with:", CLAUDE_API_KEY?.substring(0, 10) || "undefined");
-    console.log("   Full settings structure:", Object.keys(Meteor.settings.private || {}));
-  });
-}
+// Local MCP Servers
+const MCP_SERVERS = [
+  {
+    type: "url",
+    url: "http://localhost:3000/mcp/mongodb/sse",
+    name: "mongodb-server",
+    tool_configuration: {
+      enabled: true
+    }
+  },
+  {
+    type: "url",
+    url: "http://localhost:3000/mcp/elasticsearch/sse", 
+    name: "elasticsearch-server",
+    tool_configuration: {
+      enabled: true
+    }
+  },
+  {
+    type: "url",
+    url: "http://localhost:3000/mcp/fhir/sse",
+    name: "fhir-server", 
+    tool_configuration: {
+      enabled: true
+    }
+  }
+];
 
 export const mcpClaudeClient = {
-  async sendMessageToClaude(userQuery, includeTools = false) { // Default to false for testing
-    // Enhanced API key debugging
-    console.log("🔍 DEBUG: sendMessageToClaude called");
-    console.log("   CLAUDE_API_KEY:", CLAUDE_API_KEY ? `${CLAUDE_API_KEY.substring(0, 15)}...` : "UNDEFINED");
-    console.log("   Key length:", CLAUDE_API_KEY?.length);
-    console.log("   Key type:", typeof CLAUDE_API_KEY);
+  async sendMessageToClaude(userQuery, includeTools = true) {
+    if (!CLAUDE_API_KEY) {
+      throw new Meteor.Error("config-error", "Claude API Key is missing");
+    }
     
     if (Meteor.isServer) {
       try {
-        console.log(`📤 Sending to Claude: ${userQuery.substring(0, 50)}...`);
-        
+        // Always try basic first to ensure connectivity
         const response = await this.callClaudeBasic(userQuery);
         return response;
         
       } catch (error) {
-        console.error("❌ Claude API Error Details:");
-        console.error("   Error type:", error.constructor.name);
-        console.error("   Error message:", error.message);
-        
-        if (error.response) {
-          console.error("   HTTP Status:", error.response.statusCode);
-          console.error("   Response:", error.response.content);
-          console.error("   Headers:", error.response.headers);
-        }
-        
+        console.error("Claude API Error:", error.message);
         throw new Meteor.Error("claude-api-error", `Claude API failed: ${error.message}`);
       }
     }
@@ -54,8 +58,7 @@ export const mcpClaudeClient = {
   async callClaudeBasic(userQuery) {
     const requestData = {
       model: CLAUDE_MODEL,
-      max_tokens: 1000,
-      temperature: 0.7,
+      max_tokens: 4000,
       messages: [
         {
           role: "user",
@@ -65,15 +68,10 @@ export const mcpClaudeClient = {
     };
 
     const headers = {
-      "Authorization": `Bearer ${CLAUDE_API_KEY}`,
-      "Content-Type": "application/json",
-      "anthropic-version": "2023-06-01"
+      "x-api-key": CLAUDE_API_KEY,
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json"
     };
-    
-    console.log("🚀 Making basic Claude API request");
-    console.log("   URL:", CLAUDE_API_URL);
-    console.log("   Model:", CLAUDE_MODEL);
-    console.log("   Auth header:", `Bearer ${CLAUDE_API_KEY.substring(0, 20)}...`);
     
     const response = await HTTP.call("POST", CLAUDE_API_URL, {
       headers,
@@ -81,7 +79,35 @@ export const mcpClaudeClient = {
       timeout: 30000,
     });
     
-    console.log("✅ Response received from Claude");
+    return this.processClaudeResponse(response.data);
+  },
+
+  async callClaudeWithMCP(userQuery) {
+    const requestData = {
+      model: CLAUDE_MODEL,
+      max_tokens: 4000,
+      messages: [
+        {
+          role: "user",
+          content: userQuery
+        }
+      ],
+      mcp_servers: MCP_SERVERS
+    };
+
+    const headers = {
+      "x-api-key": CLAUDE_API_KEY,
+      "anthropic-version": "2023-06-01",
+      "content-type": "application/json",
+      "anthropic-beta": "mcp-client-2025-04-04"
+    };
+    
+    const response = await HTTP.call("POST", CLAUDE_API_URL, {
+      headers,
+      data: requestData,
+      timeout: 60000,
+    });
+    
     return this.processClaudeResponse(response.data);
   },
 
@@ -90,67 +116,113 @@ export const mcpClaudeClient = {
       throw new Meteor.Error("api-response-error", "Empty response from Claude");
     }
     
-    const responseText = data.content[0]?.text || "No text content";
+    let responseText = "";
+    let mcpToolUses = [];
+    let mcpToolResults = [];
+    
+    for (const block of data.content) {
+      switch (block.type) {
+        case "text":
+          responseText += block.text;
+          break;
+          
+        case "mcp_tool_use":
+          mcpToolUses.push({
+            id: block.id,
+            name: block.name,
+            server_name: block.server_name,
+            input: block.input
+          });
+          responseText += `\nUsing tool: ${block.name} from ${block.server_name}\n`;
+          break;
+          
+        case "mcp_tool_result":
+          mcpToolResults.push({
+            tool_use_id: block.tool_use_id,
+            is_error: block.is_error,
+            content: block.content
+          });
+          
+          if (block.is_error) {
+            responseText += `\nTool error: ${JSON.stringify(block.content)}\n`;
+          } else {
+            responseText += `\nTool completed successfully\n`;
+          }
+          break;
+      }
+    }
     
     return {
-      responseText,
-      answer: responseText,
+      responseText: responseText.trim(),
+      answer: responseText.trim(),
       usage: data.usage,
-      mcpToolUses: [],
-      mcpToolResults: [],
-      stop_reason: data.stop_reason
+      mcpToolUses,
+      mcpToolResults,
+      stop_reason: data.stop_reason,
+      model: data.model
     };
   },
 
-  async testConnection() {
-    try {
-      console.log("🧪 Testing Claude connection...");
-      const response = await this.sendMessageToClaude("Hello! Please respond with 'Connection test successful'.");
-      
-      return { 
-        status: 'healthy', 
-        responseReceived: !!response,
-        response: response.responseText
-      };
-    } catch (error) {
-      return { 
-        status: 'unhealthy', 
-        error: error.message 
-      };
+  // Method to try MCP when user specifically requests tool access
+  async sendMessageWithMCP(userQuery) {
+    if (!CLAUDE_API_KEY) {
+      throw new Meteor.Error("config-error", "Claude API Key is missing");
     }
+    
+    if (Meteor.isServer) {
+      try {
+        const response = await this.callClaudeWithMCP(userQuery);
+        return response;
+        
+      } catch (error) {
+        console.error("MCP request failed, falling back to basic:", error.message);
+        
+        // Fallback to basic if MCP fails
+        try {
+          const fallbackResponse = await this.callClaudeBasic(userQuery);
+          // Add note about MCP unavailability
+          fallbackResponse.responseText += "\n\n(Note: MCP tools are currently unavailable)";
+          fallbackResponse.answer = fallbackResponse.responseText;
+          return fallbackResponse;
+        } catch (fallbackError) {
+          throw new Meteor.Error("claude-api-error", `Claude API failed: ${fallbackError.message}`);
+        }
+      }
+    }
+    return null;
   }
 };
 
 export const mcpSdkClient = {
+  getMCPServersInfo() {
+    return {
+      servers: MCP_SERVERS.map(server => ({
+        name: server.name,
+        url: server.url,
+        enabled: server.tool_configuration?.enabled ?? true,
+        type: "Local MCP Connector"
+      })),
+      total: MCP_SERVERS.length,
+      transport: "Claude Native MCP Connector",
+      model: CLAUDE_MODEL
+    };
+  },
+
   async initialize() {
-    console.log('🚀 Initializing Claude client...');
-    
-    // Test the API key immediately
-    try {
-      const testResult = await mcpClaudeClient.testConnection();
-      if (testResult.status === 'healthy') {
-        console.log('✅ Claude API key is working!');
-        console.log('   Response:', testResult.response);
-      } else {
-        console.error('❌ Claude API key test failed:', testResult.error);
-      }
-    } catch (error) {
-      console.error('❌ Failed to test Claude API:', error.message);
-    }
+    console.log('Initializing Claude MCP client...');
   },
 
   async cleanup() {
-    console.log('🛑 Claude client cleanup completed');
+    console.log('Claude MCP client cleanup completed');
   }
 };
 
-// Initialize and test immediately
 if (Meteor.isServer) {
   Meteor.startup(async () => {
     try {
       await mcpSdkClient.initialize();
     } catch (error) {
-      console.error('❌ Claude client initialization failed:', error);
+      console.error('Claude MCP initialization failed:', error);
     }
   });
 }
